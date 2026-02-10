@@ -1,16 +1,26 @@
 // js/app.js
-import { auth } from "./firebase.js";
+import { auth, db } from "./firebase.js";
+
 import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
   signOut,
+  onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
-import { getProfile, saveContact } from "./profile.js";
+import { doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+import {
+  fillCountyOptions,
+  fillCityDatalist,
+  getUserProfile,
+  isContactComplete,
+  saveContact,
+} from "./profile.js";
+
 import { loadProducts, renderProducts } from "./catalog.js";
 
-/* ---------------- UI refs ---------------- */
+/* -------------------- DOM -------------------- */
 const screenLoading = document.getElementById("screenLoading");
 const screenLogin = document.getElementById("screenLogin");
 const screenContactGate = document.getElementById("screenContactGate");
@@ -28,11 +38,8 @@ const loginMsg = document.getElementById("loginMsg");
 const fullName = document.getElementById("fullName");
 const address = document.getElementById("address");
 const countySelect = document.getElementById("countySelect");
-
-// IMPORTANT: acum ai INPUT + DATALIST (nu SELECT)
 const cityInput = document.getElementById("cityInput");
 const cityList = document.getElementById("cityList");
-
 const btnSaveContact = document.getElementById("btnSaveContact");
 const btnBackToLogin = document.getElementById("btnBackToLogin");
 const contactMsg = document.getElementById("contactMsg");
@@ -41,156 +48,175 @@ const productsGrid = document.getElementById("productsGrid");
 const catalogHint = document.getElementById("catalogHint");
 const btnRefreshProducts = document.getElementById("btnRefreshProducts");
 
-/* ---------------- helpers ---------------- */
+/* -------------------- Helpers -------------------- */
 function showOnly(el) {
-  [screenLoading, screenLogin, screenContactGate, screenCatalog].forEach((x) => {
-    if (!x) return;
-    x.hidden = x !== el;
-  });
+  for (const s of [screenLoading, screenLogin, screenContactGate, screenCatalog]) {
+    if (!s) continue;
+    s.hidden = s !== el;
+  }
 }
 
-function showNote(node, text, kind = "ok") {
-  if (!node) return;
-  node.textContent = text;
-  node.hidden = false;
-  node.classList.remove("ok", "err");
-  node.classList.add(kind);
+function showNote(el, text, kind = "info") {
+  if (!el) return;
+  el.hidden = false;
+  el.textContent = text || "";
+  el.classList.remove("ok", "err", "info");
+  el.classList.add(kind);
 }
 
-function clearNote(node) {
-  if (!node) return;
-  node.hidden = true;
-  node.textContent = "";
-  node.classList.remove("ok", "err");
+function clearNote(el) {
+  if (!el) return;
+  el.hidden = true;
+  el.textContent = "";
+  el.classList.remove("ok", "err", "info");
 }
 
-function toPhoneEmail(rawPhone) {
-  const digits = String(rawPhone || "").replace(/\D/g, "");
-  if (!digits) throw new Error("Introdu un număr de telefon.");
-  return `${digits}@phone.local`;
+function normalizePhone(p) {
+  return String(p || "").replace(/\s+/g, "").trim();
 }
 
-function fillCountyOptions(selectEl) {
-  if (!selectEl) return;
-  const counties = [
-    "Alba","Arad","Argeș","Bacău","Bihor","Bistrița-Năsăud","Botoșani","Brașov","Brăila","București",
-    "Buzău","Caraș-Severin","Călărași","Cluj","Constanța","Covasna","Dâmbovița","Dolj","Galați","Giurgiu",
-    "Gorj","Harghita","Hunedoara","Ialomița","Iași","Ilfov","Maramureș","Mehedinți","Mureș","Neamț",
-    "Olt","Prahova","Satu Mare","Sălaj","Sibiu","Suceava","Teleorman","Timiș","Tulcea","Vaslui",
-    "Vâlcea","Vrancea"
-  ];
-
-  // dacă e deja populat, nu mai duplicăm
-  if (selectEl.options.length > 1) return;
-
-  counties.forEach((c) => {
-    const opt = document.createElement("option");
-    opt.value = c;
-    opt.textContent = c;
-    selectEl.appendChild(opt);
-  });
+// Simulăm login „telefon + parolă” prin email/password
+function phoneToEmail(phone) {
+  const p = normalizePhone(phone);
+  if (!p) return "";
+  // ex: 07xxxx -> "07xxxx@phone.local"
+  return `${p}@phone.local`;
 }
 
-function fillCityDatalist(_datalistEl, _county) {
-  // Dacă vrei listă completă de localități pe județe, o facem mâine.
-  // Momentan inputul rămâne liber + activat după județ.
-  if (!_datalistEl) return;
-  _datalistEl.innerHTML = "";
+async function ensureUserDoc(user) {
+  const ref = doc(db, "users", user.uid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return snap.data();
+
+  // Creează profil minim la primul login/register
+  const phone = (user.email || "").replace("@phone.local", "");
+  const payload = {
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    role: "client",
+    status: "pending",
+    phone: phone || "",
+    email: user.email || "",
+    contact: {
+      completed: false,
+    },
+  };
+
+  await setDoc(ref, payload, { merge: true });
+  return payload;
 }
 
-/* ---------------- app flow ---------------- */
-fillCountyOptions(countySelect);
+function setSessionText(user) {
+  if (!user) {
+    sessionInfo.textContent = "Neautentificat";
+    btnLogout.hidden = true;
+    return;
+  }
+  const phone = (user.email || "").replace("@phone.local", "");
+  sessionInfo.textContent = `Autentificat: ${phone || user.email || user.uid}`;
+  btnLogout.hidden = false;
+}
 
-// activează localitatea după județ
-if (countySelect) {
-  countySelect.addEventListener("change", () => {
-    const county = countySelect.value || "";
+function setCatalogHint(profile) {
+  const status = profile?.status || "pending";
+  if (status === "active") {
+    catalogHint.textContent = "Cont activ. Prețurile sunt vizibile.";
+  } else {
+    catalogHint.textContent = "Ești în așteptare (pending). Vezi catalog fără prețuri.";
+  }
+}
+
+/* -------------------- UI: Contact (county/city) -------------------- */
+function initCountyCity() {
+  // Populează județe o singură dată
+  if (countySelect && countySelect.options.length <= 1) {
+    fillCountyOptions(countySelect);
+  }
+
+  // La schimbare județ: populează lista și activează input-ul oraș
+  countySelect?.addEventListener("change", () => {
+    const county = countySelect.value;
     fillCityDatalist(cityList, county);
-    if (cityInput) {
-      cityInput.disabled = !county;
-      if (!county) cityInput.value = "";
-    }
+    cityInput.value = "";
+    cityInput.disabled = !county;
   });
 }
 
-btnBackToLogin?.addEventListener("click", () => {
-  clearNote(contactMsg);
-  showOnly(screenLogin);
+/* -------------------- Auth Buttons -------------------- */
+btnLogin?.addEventListener("click", async () => {
+  clearNote(loginMsg);
+
+  const phone = normalizePhone(loginPhone.value);
+  const pass = String(loginPass.value || "");
+
+  if (!phone) return showNote(loginMsg, "Completează telefonul.", "err");
+  if (pass.length < 4) return showNote(loginMsg, "Parola e prea scurtă.", "err");
+
+  try {
+    btnLogin.disabled = true;
+    await signInWithEmailAndPassword(auth, phoneToEmail(phone), pass);
+  } catch (e) {
+    showNote(loginMsg, e?.message || "Eroare la login.", "err");
+  } finally {
+    btnLogin.disabled = false;
+  }
+});
+
+btnRegister?.addEventListener("click", async () => {
+  clearNote(loginMsg);
+
+  const phone = normalizePhone(loginPhone.value);
+  const pass = String(loginPass.value || "");
+
+  if (!phone) return showNote(loginMsg, "Completează telefonul.", "err");
+  if (pass.length < 6) return showNote(loginMsg, "Parola trebuie să aibă minim 6 caractere.", "err");
+
+  try {
+    btnRegister.disabled = true;
+    await createUserWithEmailAndPassword(auth, phoneToEmail(phone), pass);
+    showNote(loginMsg, "Cont creat. Te autentific…", "ok");
+  } catch (e) {
+    showNote(loginMsg, e?.message || "Eroare la creare cont.", "err");
+  } finally {
+    btnRegister.disabled = false;
+  }
 });
 
 btnLogout?.addEventListener("click", async () => {
   try {
     await signOut(auth);
   } catch (e) {
-    // chiar dacă dă eroare, UI se va actualiza din onAuthStateChanged
-    console.error(e);
+    // nu blocăm UI
   }
 });
 
-btnLogin?.addEventListener("click", async () => {
-  clearNote(loginMsg);
+btnBackToLogin?.addEventListener("click", async () => {
+  clearNote(contactMsg);
+  // Înapoi = logout ca să nu rămână „în sesiune”
   try {
-    btnLogin.disabled = true;
-    btnRegister.disabled = true;
-
-    const email = toPhoneEmail(loginPhone.value);
-    const pass = String(loginPass.value || "");
-    if (!pass) throw new Error("Introdu parola.");
-
-    await signInWithEmailAndPassword(auth, email, pass);
-    // onAuthStateChanged continuă flow-ul
-  } catch (e) {
-    showNote(loginMsg, e?.message || "Eroare la login.", "err");
-  } finally {
-    btnLogin.disabled = false;
-    btnRegister.disabled = false;
-  }
+    await signOut(auth);
+  } catch (e) {}
 });
 
-btnRegister?.addEventListener("click", async () => {
-  clearNote(loginMsg);
-  try {
-    btnLogin.disabled = true;
-    btnRegister.disabled = true;
-
-    const email = toPhoneEmail(loginPhone.value);
-    const pass = String(loginPass.value || "");
-    if (pass.length < 6) throw new Error("Parola trebuie să aibă minim 6 caractere.");
-
-    await createUserWithEmailAndPassword(auth, email, pass);
-    // onAuthStateChanged continuă flow-ul
-  } catch (e) {
-    showNote(loginMsg, e?.message || "Eroare la creare cont.", "err");
-  } finally {
-    btnLogin.disabled = false;
-    btnRegister.disabled = false;
-  }
-});
-
+/* -------------------- Contact Save -------------------- */
 btnSaveContact?.addEventListener("click", async () => {
   clearNote(contactMsg);
+
+  const user = auth.currentUser;
+  if (!user) return showNote(contactMsg, "Sesiune invalidă. Reautentifică-te.", "err");
+
   try {
     btnSaveContact.disabled = true;
 
-    const u = auth.currentUser;
-    if (!u) throw new Error("Sesiune invalidă. Reautentifică-te.");
-
-    const payload = {
-      fullName: String(fullName?.value || "").trim(),
-      address: String(address?.value || "").trim(),
-      county: String(countySelect?.value || "").trim(),
-      city: String(cityInput?.value || "").trim(),
-    };
-
-    if (!payload.fullName) throw new Error("Completează numele complet.");
-    if (!payload.address) throw new Error("Completează adresa completă.");
-    if (!payload.county) throw new Error("Alege județul.");
-    if (!payload.city) throw new Error("Completează localitatea.");
-
-    await saveContact(u.uid, payload);
+    await saveContact(user.uid, {
+      fullName: fullName.value,
+      address: address.value,
+      county: countySelect.value,
+      city: cityInput.value,
+    });
 
     showNote(contactMsg, "Date salvate. Se deschide catalogul…", "ok");
-    await routeAfterAuth(u); // du-l mai departe
+    await routeAfterAuth(user);
   } catch (e) {
     showNote(contactMsg, e?.message || "Eroare la salvare.", "err");
   } finally {
@@ -198,120 +224,103 @@ btnSaveContact?.addEventListener("click", async () => {
   }
 });
 
+/* -------------------- Catalog -------------------- */
 btnRefreshProducts?.addEventListener("click", async () => {
-  const u = auth.currentUser;
-  if (!u) return;
-  await showCatalog(u);
+  try {
+    btnRefreshProducts.disabled = true;
+    await refreshCatalog();
+  } finally {
+    btnRefreshProducts.disabled = false;
+  }
 });
 
+async function refreshCatalog() {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const profile = (await getUserProfile(user.uid)) || (await ensureUserDoc(user));
+  const canSeePrices = profile?.status === "active";
+
+  const items = await loadProducts();
+  renderProducts(productsGrid, items, { showPrices: canSeePrices });
+}
+
+/* -------------------- Routing -------------------- */
 async function routeAfterAuth(user) {
-  // IMPORTANT: pentru user null -> login (fără Firestore)
-  if (!user) {
-    sessionInfo.textContent = "Neautentificat";
-    btnLogout.hidden = true;
-    showOnly(screenLogin);
-    return;
-  }
+  setSessionText(user);
 
-  sessionInfo.textContent = "Autentificat";
-  btnLogout.hidden = false;
+  // 1) asigură document user
+  const base = await ensureUserDoc(user);
 
-  // de aici încolo putem folosi Firestore (suntem logați)
-  let profile;
-  try {
-    profile = await getProfile(user.uid);
-  } catch (e) {
-    // dacă profilul nu se poate citi, nu bloca: arată o eroare + buton logout
-    console.error(e);
-    showOnly(screenLogin);
-    showNote(loginMsg, e?.message || "Nu pot citi profilul din Firestore (rules?).", "err");
-    return;
-  }
+  // 2) ia profilul (dacă există deja cu contact complet etc.)
+  const profile = (await getUserProfile(user.uid)) || base;
 
-  const contact = profile?.contact || {};
-  const needsContact =
-    !contact.fullName || !contact.address || !contact.county || !contact.city;
+  // 3) gate: date contact
+  if (!isContactComplete(profile)) {
+    // prefill
+    fullName.value = profile?.contact?.fullName || "";
+    address.value = profile?.contact?.address || "";
 
-  if (needsContact) {
-    // prefill dacă există
-    if (fullName) fullName.value = contact.fullName || "";
-    if (address) address.value = contact.address || "";
+    const county = profile?.contact?.county || "";
+    countySelect.value = county;
 
-    const county = contact.county || "";
-    if (countySelect) {
-      fillCountyOptions(countySelect);
-      countySelect.value = county;
-    }
+    fillCityDatalist(cityList, county);
+    cityInput.disabled = !county;
 
-    if (cityInput) {
-      cityInput.disabled = !county;
-      if (county) fillCityDatalist(cityList, county);
-      cityInput.value = contact.city || "";
-    }
+    const city = profile?.contact?.city || "";
+    cityInput.value = city;
 
+    clearNote(contactMsg);
     showOnly(screenContactGate);
     return;
   }
 
-  await showCatalog(user);
+  // 4) catalog
+  setCatalogHint(profile);
+  showOnly(screenCatalog);
+
+  // încarcă produse
+  try {
+    await refreshCatalog();
+  } catch (e) {
+    // dacă rulele sunt greșite / nu ai read pe products, vei vedea aici blocajul
+    productsGrid.innerHTML = `<div class="note">Eroare la încărcarea produselor: ${escapeHtml(e?.message || "unknown")}</div>`;
+  }
 }
 
-async function showCatalog(user) {
+/* -------------------- Boot -------------------- */
+initCountyCity();
+showOnly(screenLoading);
+setSessionText(null);
+
+onAuthStateChanged(auth, async (user) => {
   clearNote(loginMsg);
   clearNote(contactMsg);
 
-  showOnly(screenCatalog);
-
-  let profile;
-  try {
-    profile = await getProfile(user.uid);
-  } catch (e) {
-    console.error(e);
-    showNote(
-      catalogHint,
-      e?.message || "Nu pot citi profilul (rules / conexiune).",
-      "err"
-    );
+  if (!user) {
+    setSessionText(null);
+    showOnly(screenLogin);
     return;
   }
 
-  const status = profile?.status || "pending";
-  const canSeePrices = status === "active";
-
-  catalogHint.textContent =
-    status === "active"
-      ? "Ești activ. Vezi prețurile."
-      : "Ești în așteptare (pending). Vezi catalog fără prețuri.";
+  showOnly(screenLoading);
 
   try {
-    const items = await loadProducts();
-    renderProducts(productsGrid, items, { showPrices: canSeePrices });
+    await routeAfterAuth(user);
   } catch (e) {
-    console.error(e);
-    // nu blocăm UI
-    productsGrid.innerHTML = `<div class="note err">Nu pot încărca produsele (rules / conexiune / index). ${escapeHtml(e?.message || "")}</div>`;
+    // fallback: dacă ceva crapă, măcar să nu rămână „blocată” fără mesaj
+    setSessionText(user);
+    showOnly(screenLogin);
+    showNote(loginMsg, `Eroare: ${e?.message || "unknown"}`, "err");
   }
-}
+});
 
+/* -------------------- small util -------------------- */
 function escapeHtml(s) {
-  return (s || "")
+  return String(s || "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
-
-/* ---------------- boot ---------------- */
-showOnly(screenLoading);
-
-onAuthStateChanged(auth, async (user) => {
-  try {
-    await routeAfterAuth(user);
-  } catch (e) {
-    console.error(e);
-    // fallback: nu rămâne pe loading
-    showOnly(screenLogin);
-    showNote(loginMsg, e?.message || "Eroare neașteptată în aplicație.", "err");
-  }
-});
