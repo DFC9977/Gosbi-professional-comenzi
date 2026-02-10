@@ -12,41 +12,71 @@
       <div class="logo">CG</div>
       <div class="brand-text">
         <div class="title">Comenzi Gosbi</div>
-        <div class="subtitle">Setup Firebase (Pasul 2)</div>
+        <div class="subtitle" id="subTitle">Autentificare (Pasul 3)</div>
       </div>
+    </div>
+    <div class="top-actions">
+      <button class="btn ghost" id="btnLogout" style="display:none">Logout</button>
     </div>
   </header>
 
   <main class="container">
-    <section class="card">
-      <h1>Conectare Firebase</h1>
-      <p class="muted">
-        Dacă vezi <b>Connected ✅</b>, înseamnă că aplicația ta web este conectată corect la Firebase.
-      </p>
+    <!-- AUTH -->
+    <section class="card" id="authCard">
+      <h1>Autentificare</h1>
+      <p class="muted">Login cu <b>telefon + parola</b>. Conturile noi sunt <b>in asteptare</b> pana le valideaza admin.</p>
 
-      <div class="status">
-        <div class="row">
-          <span class="label">Status:</span>
-          <span id="fbStatus" class="pill warn">Initializing…</span>
+      <div class="grid2">
+        <div>
+          <label class="lbl">Telefon</label>
+          <input id="phone" class="inp" placeholder="07xxxxxxxx" inputmode="tel" />
         </div>
-        <div class="row">
-          <span class="label">Project ID:</span>
-          <span id="fbProject" class="mono">—</span>
-        </div>
-        <div class="row">
-          <span class="label">Auth Domain:</span>
-          <span id="fbAuthDomain" class="mono">—</span>
+        <div>
+          <label class="lbl">Parola</label>
+          <input id="pass" class="inp" placeholder="parola" type="password" />
         </div>
       </div>
 
-      <div class="hint">
-        <b>Notă:</b> În pasul 3 facem login (telefon + parolă) și roluri (client/admin).
+      <div class="actions">
+        <button class="btn" id="btnLogin">Intra</button>
+        <button class="btn secondary" id="btnRegister">Creeaza cont</button>
+      </div>
+
+      <div class="notice" id="authMsg" style="display:none"></div>
+    </section>
+
+    <!-- APP -->
+    <section class="card" id="appCard" style="display:none">
+      <h1>Bine ai venit</h1>
+
+      <div class="status">
+        <div class="row">
+          <span class="label">User:</span>
+          <span id="who" class="mono">—</span>
+        </div>
+        <div class="row">
+          <span class="label">Rol:</span>
+          <span id="role" class="mono">—</span>
+        </div>
+        <div class="row">
+          <span class="label">Status:</span>
+          <span id="status" class="pill warn">—</span>
+        </div>
+      </div>
+
+      <div class="hint" id="hintBox">
+        Daca esti <b>pending</b>, vezi catalogul fara preturi. Dupa validarea adminului, vei vedea preturile si vei putea comanda.
+      </div>
+
+      <div class="catalog">
+        <h2>Catalog (demo)</h2>
+        <div id="catalogList" class="catalogList"></div>
       </div>
     </section>
   </main>
 
   <footer class="footer">
-    <span>v1 • Firebase • Pasul 2</span>
+    <span>v1 • Auth • Pasul 3</span>
   </footer>
 
   <script type="module" src="./app.js"></script>
