@@ -16,7 +16,6 @@ export async function loadProducts() {
   const q = query(
     collection(db, "products"),
     where("active", "==", true),
-    orderBy("name", "asc")
   );
 
   const snap = await getDocs(q);
