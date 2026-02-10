@@ -4,7 +4,7 @@ import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/f
 import { loginWithPhone, registerWithPhone, logout } from "./auth.js";
 import {
   fillCountyOptions,
-  fillCityOptions,
+  fillCityDatalist,
   getUserProfile,
   isContactComplete,
   saveContact
