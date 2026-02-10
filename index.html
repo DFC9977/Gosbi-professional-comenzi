@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comenzi Gosbi - v1</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">CG</div>
+      <div class="brand-text">
+        <div class="title">Comenzi Gosbi</div>
+        <div class="subtitle">Setup Firebase (Pasul 2)</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h1>Conectare Firebase</h1>
+      <p class="muted">
+        Dacă vezi <b>Connected ✅</b>, înseamnă că aplicația ta web este conectată corect la Firebase.
+      </p>
+
+      <div class="status">
+        <div class="row">
+          <span class="label">Status:</span>
+          <span id="fbStatus" class="pill warn">Initializing…</span>
+        </div>
+        <div class="row">
+          <span class="label">Project ID:</span>
+          <span id="fbProject" class="mono">—</span>
+        </div>
+        <div class="row">
+          <span class="label">Auth Domain:</span>
+          <span id="fbAuthDomain" class="mono">—</span>
+        </div>
+      </div>
+
+      <div class="hint">
+        <b>Notă:</b> În pasul 3 facem login (telefon + parolă) și roluri (client/admin).
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>v1 • Firebase • Pasul 2</span>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
