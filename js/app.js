@@ -33,7 +33,8 @@ const loginMsg = document.getElementById("loginMsg");
 const fullName = document.getElementById("fullName");
 const address = document.getElementById("address");
 const countySelect = document.getElementById("countySelect");
-const citySelect = document.getElementById("citySelect");
+const cityInput = document.getElementById("cityInput");
+const cityList = document.getElementById("cityList");
 const btnSaveContact = document.getElementById("btnSaveContact");
 const btnBackToLogin = document.getElementById("btnBackToLogin");
 const contactMsg = document.getElementById("contactMsg");
@@ -63,9 +64,12 @@ function hideNote(el) {
 // Populate selects
 fillCountyOptions(countySelect);
 countySelect.addEventListener("change", () => {
-  fillCityOptions(citySelect, countySelect.value);
+  const county = countySelect.value;
+  fillCityDatalist(cityList, county);
+  cityInput.value = "";
+  cityInput.disabled = !county;
 });
-
+;
 // Buttons
 btnLogin.addEventListener("click", async () => {
   hideNote(loginMsg);
@@ -111,7 +115,7 @@ btnSaveContact.addEventListener("click", async () => {
       fullName: fullName.value,
       address: address.value,
       county: countySelect.value,
-      city: citySelect.value
+     city: cityInput.value
     });
 
     showNote(contactMsg, "Date salvate. Se deschide catalogul…", "ok");
