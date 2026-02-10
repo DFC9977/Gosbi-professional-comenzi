@@ -14,12 +14,12 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAO-ARS_5u7nG8EOKNl6yILeoILbleeuo4",
+  apiKey: "AIzaSyAO-ARS_5u7nG8EOkNl6yILeoILbleeuo4",
   authDomain: "gosbiromania.firebaseapp.com",
   projectId: "gosbiromania",
   storageBucket: "gosbiromania.firebasestorage.app",
   messagingSenderId: "885972653346",
-  appId: "1:885972653346:web:76fda6a5435050e432017b",
+  appId: "1:885972653346:web:76fda6a5435050e432017b"
 };
 
 const app = initializeApp(firebaseConfig);
