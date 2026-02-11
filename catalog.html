@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Catalog</title>
+</head>
+
+<body>
+
+<h2>Categorii</h2>
+<div id="categories"></div>
+
+<hr>
+
+<h2>Produse</h2>
+<div id="products"></div>
+
+<script type="module">
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import {
+  getFirestore,
+  collection,
+  getDocs,
+  query,
+  where,
+  orderBy
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+
+// 🔹 CONFIGUL TĂU (din Firebase console)
+const firebaseConfig = {
+  apiKey: "PASTE",
+  authDomain: "PASTE",
+  projectId: "PASTE",
+  storageBucket: "PASTE",
+  messagingSenderId: "PASTE",
+  appId: "PASTE"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+
+// =========================
+// LOAD CATEGORIES
+// =========================
+
+const catDiv = document.getElementById("categories");
+
+const catSnap = await getDocs(
+  query(collection(db, "categories"), orderBy("sortOrder"))
+);
+
+catSnap.forEach(doc => {
+  const c = doc.data();
+
+  const btn = document.createElement("button");
+  btn.innerText = c.name;
+  btn.style.margin = "5px";
+
+  btn.onclick = () => loadProducts(doc.id);
+
+  catDiv.appendChild(btn);
+});
+
+
+// =========================
+// LOAD PRODUCTS
+// =========================
+
+async function loadProducts(categoryId) {
+
+  const prodDiv = document.getElementById("products");
+  prodDiv.innerHTML = "Loading...";
+
+  const snap = await getDocs(
+    query(
+      collection(db, "products"),
+      where("categoryId", "==", categoryId),
+      where("active", "==", true),
+      orderBy("name")
+    )
+  );
+
+  prodDiv.innerHTML = "";
+
+  snap.forEach(doc => {
+    const p = doc.data();
+
+    const d = document.createElement("div");
+    d.innerHTML = `
+      <b>${p.name}</b><br>
+      Preț: ${p.basePrice} RON
+      <hr>
+    `;
+
+    prodDiv.appendChild(d);
+  });
+}
+
+</script>
+
+</body>
+</html>
