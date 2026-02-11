@@ -234,14 +234,36 @@ btnRefreshProducts?.addEventListener("click", async () => {
   }
 });
 
+function normalizePrice(v) {
+  // Accept number or numeric string; fallback 0
+  if (v === null || v === undefined) return 0;
+  const n = typeof v === "number" ? v : Number(String(v).replace(",", ".").trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
 async function refreshCatalog() {
   const user = auth.currentUser;
   if (!user) return;
 
   const profile = (await getUserProfile(user.uid)) || (await ensureUserDoc(user));
-  const canSeePrices = profile?.status === "active";
 
-  const items = await loadProducts();
+  // IMPORTANT: price visibility gate
+  const canSeePrices = profile?.status === "active" || profile?.role === "admin";
+
+  // load products from the shared loader, then normalize price fields
+  const rawItems = await loadProducts();
+
+  const items = (rawItems || []).map((p) => {
+    const base = normalizePrice(p?.basePrice ?? p?.base_price ?? p?.price ?? p?.basePriceRon);
+    return {
+      ...p,
+      // make sure all downstream functions find a numeric base price
+      basePrice: base,
+      base_price: base,
+      price: base,
+    };
+  });
+
   renderProducts(productsGrid, items, { showPrices: canSeePrices });
 }
 
