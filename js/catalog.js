@@ -165,9 +165,9 @@ function productCardHTML(p, showPrice, priceRules) {
       <div style="font-weight:700; line-height:1.25; margin-bottom:10px;">${name}</div>
       <div style="opacity:0.9; margin-bottom:12px;">
         ${
-          showPrice
-            ? `Preț: <b>${formatMoney(finalPrice)} lei</b> <small style="opacity:.7">(adaos ${formatMoney(markup)}%)</small>`
-            : `Prețuri vizibile doar pentru clienți activi`
+         showPrice
+  ? `Preț: <b>${formatMoney(finalPrice)} lei</b>`
+  : `Prețuri vizibile doar pentru clienți activi`
         }
       </div>
       <button type="button" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit;">
