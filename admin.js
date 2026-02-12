@@ -31,7 +31,7 @@ $("btnLogin").onclick = async () => {
   if (!phone || phone.length < 9) return ($("err").textContent = "Telefon invalid.");
   if (!pass || pass.length < 6) return ($("err").textContent = "Parola minim 6 caractere.");
 
-  const email = phoneToEmail(phone); // IMPORTANT: folosește exact domeniul din app (phone.local)
+  const email = phoneToEmail(phone); // domeniul corect: phone.local (din auth.js)
 
   try {
     await signInWithEmailAndPassword(auth, email, pass);
@@ -67,13 +67,21 @@ onAuthStateChanged(auth, async (u) => {
 
 async function loadUsers() {
   // Pending
-  const qPend = query(collection(db, "users"), where("status", "==", "pending"), orderBy("createdAt", "desc"));
+  const qPend = query(
+    collection(db, "users"),
+    where("status", "==", "pending"),
+    orderBy("createdAt", "desc")
+  );
   const pendSnap = await getDocs(qPend);
   $("pending").innerHTML = pendSnap.size ? "" : "<small>Nimic pending.</small>";
   pendSnap.forEach((s) => $("pending").appendChild(renderUserCard(s.id, s.data(), true)));
 
   // Active
-  const qAct = query(collection(db, "users"), where("status", "==", "active"), orderBy("createdAt", "desc"));
+  const qAct = query(
+    collection(db, "users"),
+    where("status", "==", "active"),
+    orderBy("createdAt", "desc")
+  );
   const actSnap = await getDocs(qAct);
   $("active").innerHTML = actSnap.size ? "" : "<small>Nimic active.</small>";
   actSnap.forEach((s) => $("active").appendChild(renderUserCard(s.id, s.data(), false)));
@@ -83,7 +91,7 @@ function renderUserCard(uid, u, isPending) {
   const div = document.createElement("div");
   div.className = "card";
 
-  // Prefill safe
+  // Prefill
   const clientType = u?.clientType || "tip1";
   const channel = u?.channel || "internet";
   const globalMarkup = Number(u?.priceRules?.globalMarkup ?? 0);
@@ -112,7 +120,7 @@ function renderUserCard(uid, u, isPending) {
       </label>
 
       <label>Adaos global (%):
-        <input class="globalMarkup" type="number" step="0.01" />
+        <input class="globalMarkup" type="number" step="0.01" min="0" />
       </label>
 
       ${isPending ? `<button class="approve">Aprobă</button>` : `<button class="deactivate">Trece în pending</button>`}
@@ -149,6 +157,21 @@ function renderUserCard(uid, u, isPending) {
   if (isPending) {
     div.querySelector(".approve").onclick = async () => {
       const f = readForm();
+
+      // VALIDARE OBLIGATORIE (cerința ta)
+      if (!f.clientType) {
+        alert("Selectează tip client.");
+        return;
+      }
+      if (!f.channel) {
+        alert("Selectează canalul.");
+        return;
+      }
+      if (!Number.isFinite(f.globalMarkup) || f.globalMarkup <= 0) {
+        alert("Setează adaos global (%) > 0 înainte de aprobare.");
+        return;
+      }
+
       await updateDoc(doc(db, "users", uid), {
         status: "active",
         clientType: f.clientType,
@@ -159,11 +182,15 @@ function renderUserCard(uid, u, isPending) {
         },
         updatedAt: serverTimestamp()
       });
+
       await loadUsers();
     };
   } else {
     div.querySelector(".deactivate").onclick = async () => {
-      await updateDoc(doc(db, "users", uid), { status: "pending", updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, "users", uid), {
+        status: "pending",
+        updatedAt: serverTimestamp()
+      });
       await loadUsers();
     };
   }
@@ -178,7 +205,6 @@ function renderUserCard(uid, u, isPending) {
       [`priceRules.categories.${catId}`]: markup,
       updatedAt: serverTimestamp()
     });
-    // reload to refresh list
     await loadUsers();
   };
 
@@ -186,7 +212,6 @@ function renderUserCard(uid, u, isPending) {
     const catId = (div.querySelector(".catId").value || "").trim();
     if (!catId) return alert("Scrie categoryId.");
 
-    // Firestore: delete field
     const { deleteField } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js");
     await updateDoc(doc(db, "users", uid), {
       [`priceRules.categories.${catId}`]: deleteField(),
