@@ -238,19 +238,35 @@ async function refreshCatalog() {
   const profile = (await getUserProfile(user.uid)) || (await ensureUserDoc(user));
   const canSeePrices = profile?.status === "active" || profile?.role === "admin";
 
-  const rawItems = await loadProducts(db); // IMPORTANT: db
+  const rawItems = await loadProducts(db);
+
+  // normalize prețuri: folosim priceGross ca bază (preț cu TVA)
   const items = (rawItems || []).map((p) => {
-    const base = normalizePrice(p?.priceGross ?? p?.price ?? p?.basePrice ?? p?.base_price ?? p?.basePriceRon);
-    return { ...p, priceGross: base, price: base, basePrice: base, base_price: base };
+    const base = normalizePrice(
+      p?.priceGross ?? p?.basePrice ?? p?.base_price ?? p?.price ?? p?.basePriceRon
+    );
+    return {
+      ...p,
+      // standardizăm pentru catalog.js
+      priceGross: base,
+      basePrice: base,
+      base_price: base,
+      price: base,
+    };
   });
 
-  renderProducts(productsGrid, items, { showPrices: canSeePrices, db });
+  // ✅ IMPORTANT: trimitem priceRules în catalog ca să aplice adaosurile
+  renderProducts(productsGrid, items, {
+    showPrices: canSeePrices,
+    db,
+    priceRules: profile?.priceRules || null
+  });
 }
 
 /* -------------------- Admin screen in-app -------------------- */
 btnAdmin?.addEventListener("click", () => {
   showOnly(screenAdmin);
-  if (adminFrame) adminFrame.src = "./admin.html?v=" + Date.now(); // refresh
+  if (adminFrame) adminFrame.src = "./admin.html?v=" + Date.now();
 });
 
 btnBackToCatalog?.addEventListener("click", () => {
@@ -264,10 +280,12 @@ async function routeAfterAuth(user) {
   const base = await ensureUserDoc(user);
   const profile = (await getUserProfile(user.uid)) || base;
 
-  // show admin button if admin
   if (btnAdmin) btnAdmin.style.display = (profile?.role === "admin") ? "inline-block" : "none";
 
-  // contact gate
+  if (!isContactComplete Reiderr(profile)) {
+    // (safety) - dacă ai greșit funcția, pune la loc isContactComplete(profile)
+  }
+
   if (!isContactComplete(profile)) {
     fullName.value = profile?.contact?.fullName || "";
     address.value = profile?.contact?.address || "";
