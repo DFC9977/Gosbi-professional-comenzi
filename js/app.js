@@ -251,7 +251,7 @@ async function refreshCatalog() {
   const canSeePrices = profile?.status === "active" || profile?.role === "admin";
 
   // load products from the shared loader, then normalize price fields
-  const rawItems = await loadProducts();
+  const rawItems = await loadProducts(db);
 
   const items = (rawItems || []).map((p) => {
     const base = normalizePrice(p?.basePrice ?? p?.base_price ?? p?.price ?? p?.basePriceRon);
@@ -264,7 +264,7 @@ async function refreshCatalog() {
     };
   });
 
-  renderProducts(productsGrid, items, { showPrices: canSeePrices });
+  renderProducts(productsGrid, items, { showPrices: canSeePrices, db });
 }
 
 /* -------------------- Routing -------------------- */
