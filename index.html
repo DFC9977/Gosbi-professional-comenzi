@@ -3,10 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-
   <title>Comenzi Gosbi</title>
-
-  <!-- CSS -->
   <link rel="stylesheet" href="./styles.css" />
 </head>
 
@@ -23,6 +20,16 @@
     </div>
 
     <div class="actions">
+      <!-- BUTON ADMIN (apare doar dacă ești admin) -->
+      <a
+        id="adminLink"
+        href="./admin.html"
+        class="btn ghost"
+        style="display:none; text-decoration:none;"
+      >
+        Admin
+      </a>
+
       <button id="btnLogout" class="btn ghost" hidden>
         Logout
       </button>
@@ -71,13 +78,8 @@
       </div>
 
       <div class="row">
-        <button id="btnLogin" class="btn primary">
-          Login
-        </button>
-
-        <button id="btnRegister" class="btn">
-          Creează cont
-        </button>
+        <button id="btnLogin" class="btn primary">Login</button>
+        <button id="btnRegister" class="btn">Creează cont</button>
       </div>
 
       <div id="loginMsg" class="note" hidden></div>
@@ -85,7 +87,6 @@
 
     <!-- CONTACT GATE -->
     <section id="screenContactGate" class="card" hidden>
-
       <h2>Date de contact</h2>
 
       <p class="muted">
@@ -117,8 +118,10 @@
 
         <label class="field">
           <span>Localitate</span>
-          <<input id="cityInput" list="cityList" disabled />
-<datalist id="cityList"></datalist>
+          <!-- FIX: era <<input ... -->
+          <input id="cityInput" list="cityList" disabled />
+          <datalist id="cityList"></datalist>
+
           <div class="hint">
             Localitatea se activează după alegerea județului.
           </div>
@@ -127,48 +130,34 @@
       </div>
 
       <div class="row">
-        <button id="btnSaveContact" class="btn primary">
-          Salvează și continuă
-        </button>
-
-        <button id="btnBackToLogin" class="btn ghost">
-          Înapoi
-        </button>
+        <button id="btnSaveContact" class="btn primary">Salvează și continuă</button>
+        <button id="btnBackToLogin" class="btn ghost">Înapoi</button>
       </div>
 
       <div id="contactMsg" class="note" hidden></div>
-
     </section>
 
     <!-- CATALOG -->
     <section id="screenCatalog" class="card" hidden>
-
       <div class="row between">
         <div>
           <h2>Catalog</h2>
           <p id="catalogHint" class="muted"></p>
         </div>
 
-        <button id="btnRefreshProducts" class="btn">
-          Refresh
-        </button>
+        <button id="btnRefreshProducts" class="btn">Refresh</button>
       </div>
 
       <div id="productsGrid" class="products"></div>
-
     </section>
 
   </main>
 
   <!-- FOOTER -->
   <footer class="footer">
-    <span class="muted">
-      v1 • Firebase Spark • GitHub Pages
-    </span>
+    <span class="muted">v1 • Firebase Spark • GitHub Pages</span>
   </footer>
 
-  <!-- APP SCRIPT (cache bust v=3) -->
-  <script type="module" src="./js/app.js?v=3"></script>
-
+  <script type="module" src="./js/app.js?v=10"></script>
 </body>
 </html>
