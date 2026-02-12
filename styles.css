@@ -181,3 +181,15 @@ textarea{ resize:vertical; }
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.08);
 }
+#productsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.product-card {
+  background: #111827;
+  border-radius: 12px;
+  padding: 16px;
+}
