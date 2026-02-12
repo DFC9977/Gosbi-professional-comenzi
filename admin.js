@@ -23,6 +23,7 @@ import {
 const $ = (id) => document.getElementById(id);
 
 let ALL_CATEGORIES = []; // [{id,name}]
+let ALL_USERS = [];      // [{uid, phone, name}]
 
 // -------------------- AUTH UI --------------------
 $("btnLogin").onclick = async () => {
@@ -34,10 +35,8 @@ $("btnLogin").onclick = async () => {
   if (!phone || phone.length < 9) return ($("err").textContent = "Telefon invalid.");
   if (!pass || pass.length < 6) return ($("err").textContent = "Parola minim 6 caractere.");
 
-  const email = phoneToEmail(phone);
-
   try {
-    await signInWithEmailAndPassword(auth, email, pass);
+    await signInWithEmailAndPassword(auth, phoneToEmail(phone), pass);
   } catch (e) {
     $("err").textContent = e?.message || "Eroare login";
   }
@@ -55,6 +54,7 @@ onAuthStateChanged(auth, async (u) => {
   if (!u) return;
 
   try {
+    // verifică dacă e admin
     const meRef = doc(db, "users", u.uid);
     const meSnap = await getDoc(meRef);
     const me = meSnap.exists() ? meSnap.data() : null;
@@ -94,24 +94,37 @@ async function loadCategories() {
     .map(({ id, name }) => ({ id, name }));
 }
 
-// -------------------- USERS LIST (fără orderBy ca să nu crape) --------------------
+// -------------------- USERS LIST (fără orderBy) --------------------
 async function loadUsers() {
   $("pending").innerHTML = "";
   $("active").innerHTML = "";
   $("err").textContent = "";
 
   try {
-    // Pending
+    // 1) Toți userii pentru dropdown affiliate
+    const allSnap = await getDocs(collection(db, "users"));
+    ALL_USERS = [];
+    allSnap.forEach((s) => {
+      const d = s.data() || {};
+      ALL_USERS.push({
+        uid: s.id,
+        phone: d.phone || "",
+        name: d.contact?.fullName || "",
+      });
+    });
+
+    // 2) Pending
     const qPend = query(collection(db, "users"), where("status", "==", "pending"));
     const pendSnap = await getDocs(qPend);
     $("pending").innerHTML = pendSnap.size ? "" : "<small>Nimic pending.</small>";
     pendSnap.forEach((s) => $("pending").appendChild(renderUserCard(s.id, s.data(), true)));
 
-    // Active
+    // 3) Active
     const qAct = query(collection(db, "users"), where("status", "==", "active"));
     const actSnap = await getDocs(qAct);
     $("active").innerHTML = actSnap.size ? "" : "<small>Nimic active.</small>";
     actSnap.forEach((s) => $("active").appendChild(renderUserCard(s.id, s.data(), false)));
+
   } catch (e) {
     console.error(e);
     $("err").textContent = e?.message || String(e);
@@ -126,13 +139,19 @@ function renderUserCard(uid, u, isPending) {
   const channel = u?.channel || "internet";
   const globalMarkup = Number(u?.priceRules?.globalMarkup ?? 0);
   const categoriesObj = u?.priceRules?.categories || {};
+  const referrerUid = u?.referrerUid || "";
 
   div.innerHTML = `
     <b>${u.phone || "(fără phone)"} </b> <small>(${uid})</small><br>
-    <small>status: ${u.status || "-"} | tip: ${u.clientType || "-"} | canal: ${u.channel || "-"}</small>
+    <small>
+      status: ${u.status || "-"} |
+      tip: ${u.clientType || "-"} |
+      canal: ${u.channel || "-"} |
+      recomandat de: ${u.referrerPhone || u.referrerUid || "-"}
+    </small>
     <br><br>
 
-    <div class="row">
+    <div class="row" style="flex-wrap:wrap; gap:10px; align-items:center;">
       <label>Tip client:
         <select class="clientType">
           <option value="tip1">Tip 1</option>
@@ -150,6 +169,10 @@ function renderUserCard(uid, u, isPending) {
         </select>
       </label>
 
+      <label>Recomandat de:
+        <select class="referrer" disabled></select>
+      </label>
+
       <label>Adaos global (%):
         <input class="globalMarkup" type="number" step="0.01" min="0" />
       </label>
@@ -161,7 +184,7 @@ function renderUserCard(uid, u, isPending) {
       <b>Adaos pe categorie (override)</b><br>
       <small>Dacă nu există override, se aplică adaosul global.</small>
 
-      <div class="row" style="margin-top:8px">
+      <div class="row" style="margin-top:8px; flex-wrap:wrap; gap:10px; align-items:center;">
         <select class="catSelect"></select>
         <input class="catMarkup" type="number" step="0.01" min="0" placeholder="% categorie" />
         <button class="setCat">Setează/Actualizează</button>
@@ -172,10 +195,40 @@ function renderUserCard(uid, u, isPending) {
     </div>
   `;
 
-  // prefill values
+  // prefill
   div.querySelector(".clientType").value = clientType;
   div.querySelector(".channel").value = channel;
   div.querySelector(".globalMarkup").value = String(globalMarkup);
+
+  const channelSel = div.querySelector(".channel");
+  const refSel = div.querySelector(".referrer");
+
+  // populate referrer dropdown
+  {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(fără)";
+    refSel.appendChild(opt);
+  }
+
+  ALL_USERS
+    .filter((x) => x.uid !== uid)
+    .sort((a, b) => (a.name || a.phone).localeCompare(b.name || b.phone))
+    .forEach((x) => {
+      const opt = document.createElement("option");
+      opt.value = x.uid;
+      opt.textContent = `${x.name || "(fără nume)"} — ${x.phone || x.uid}`;
+      refSel.appendChild(opt);
+    });
+
+  refSel.value = referrerUid;
+
+  function syncRefEnabled() {
+    refSel.disabled = channelSel.value !== "recomandare_crescator";
+    if (refSel.disabled) refSel.value = ""; // curățare dacă schimbi canalul
+  }
+  channelSel.addEventListener("change", syncRefEnabled);
+  syncRefEnabled();
 
   // dropdown categories
   const catSelect = div.querySelector(".catSelect");
@@ -200,6 +253,7 @@ function renderUserCard(uid, u, isPending) {
     clientType: div.querySelector(".clientType").value,
     channel: div.querySelector(".channel").value,
     globalMarkup: Number(div.querySelector(".globalMarkup").value || 0),
+    referrerUid: div.querySelector(".referrer").value || "",
   });
 
   // Approve / deactivate
@@ -213,10 +267,18 @@ function renderUserCard(uid, u, isPending) {
         return alert("Setează adaos global (%) > 0 înainte de aprobare.");
       }
 
+      if (f.channel === "recomandare_crescator" && !f.referrerUid) {
+        return alert("Selectează afiliatul (Recomandat de).");
+      }
+
+      const ref = ALL_USERS.find((x) => x.uid === f.referrerUid);
+
       await updateDoc(doc(db, "users", uid), {
         status: "active",
         clientType: f.clientType,
         channel: f.channel,
+        referrerUid: (f.channel === "recomandare_crescator") ? f.referrerUid : "",
+        referrerPhone: (f.channel === "recomandare_crescator") ? (ref?.phone || "") : "",
         priceRules: {
           globalMarkup: f.globalMarkup,
           categories: categoriesObj || {},
@@ -283,7 +345,9 @@ function renderCatList(div, categoriesObj) {
   list.innerHTML = entries
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([id, v]) => {
-      const label = nameById[id] ? `${nameById[id]} <small style="opacity:.6">(${id})</small>` : id;
+      const label = nameById[id]
+        ? `${nameById[id]} <small style="opacity:.6">(${id})</small>`
+        : id;
       return `<small><b>${label}</b>: ${Number(v)}%</small>`;
     })
     .join("<br>");
