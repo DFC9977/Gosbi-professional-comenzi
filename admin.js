@@ -12,7 +12,6 @@ import {
   collection,
   query,
   where,
-  orderBy,
   getDocs,
   doc,
   getDoc,
@@ -35,7 +34,7 @@ $("btnLogin").onclick = async () => {
   if (!phone || phone.length < 9) return ($("err").textContent = "Telefon invalid.");
   if (!pass || pass.length < 6) return ($("err").textContent = "Parola minim 6 caractere.");
 
-  const email = phoneToEmail(phone); // EXACT ca în aplicație (phone.local)
+  const email = phoneToEmail(phone);
 
   try {
     await signInWithEmailAndPassword(auth, email, pass);
@@ -55,23 +54,24 @@ onAuthStateChanged(auth, async (u) => {
 
   if (!u) return;
 
-  // verifică dacă e admin
-  const meRef = doc(db, "users", u.uid);
-  const meSnap = await getDoc(meRef);
-  const me = meSnap.exists() ? meSnap.data() : null;
+  try {
+    const meRef = doc(db, "users", u.uid);
+    const meSnap = await getDoc(meRef);
+    const me = meSnap.exists() ? meSnap.data() : null;
 
-  $("me").innerHTML = `<small>UID: ${u.uid}</small><br><b>role:</b> ${
-    me?.role || "(lipsește)"
-  } | <b>status:</b> ${me?.status || "(lipsește)"}`;
+    $("me").innerHTML = `<small>UID: ${u.uid}</small><br><b>role:</b> ${me?.role || "(lipsește)"} | <b>status:</b> ${me?.status || "(lipsește)"}`;
 
-  if (me?.role !== "admin") {
-    $("err").textContent =
-      "Nu ești admin. Setează în Firestore: users/{uid}.role = 'admin'.";
-    return;
+    if (me?.role !== "admin") {
+      $("err").textContent = "Nu ești admin. Setează: users/{uid}.role = 'admin'.";
+      return;
+    }
+
+    await loadCategories();
+    await loadUsers();
+  } catch (e) {
+    console.error(e);
+    $("err").textContent = e?.message || String(e);
   }
-
-  await loadCategories();
-  await loadUsers();
 });
 
 // -------------------- CATEGORIES --------------------
@@ -81,49 +81,47 @@ async function loadCategories() {
 
   snap.forEach((d) => {
     const data = d.data() || {};
+    if (data.active === false) return;
     cats.push({
       id: d.id,
       name: String(data.name || d.id),
       sortOrder: Number(data.sortOrder ?? 999999),
-      active: data.active !== false,
     });
   });
 
-  // doar active, sortate
   ALL_CATEGORIES = cats
-    .filter((c) => c.active)
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
     .map(({ id, name }) => ({ id, name }));
 }
 
-// -------------------- USERS LIST --------------------
+// -------------------- USERS LIST (fără orderBy ca să nu crape) --------------------
 async function loadUsers() {
-  // Pending
-  const qPend = query(
-    collection(db, "users"),
-    where("status", "==", "pending"),
-    orderBy("createdAt", "desc")
-  );
-  const pendSnap = await getDocs(qPend);
-  $("pending").innerHTML = pendSnap.size ? "" : "<small>Nimic pending.</small>";
-  pendSnap.forEach((s) => $("pending").appendChild(renderUserCard(s.id, s.data(), true)));
+  $("pending").innerHTML = "";
+  $("active").innerHTML = "";
+  $("err").textContent = "";
 
-  // Active
-  const qAct = query(
-    collection(db, "users"),
-    where("status", "==", "active"),
-    orderBy("createdAt", "desc")
-  );
-  const actSnap = await getDocs(qAct);
-  $("active").innerHTML = actSnap.size ? "" : "<small>Nimic active.</small>";
-  actSnap.forEach((s) => $("active").appendChild(renderUserCard(s.id, s.data(), false)));
+  try {
+    // Pending
+    const qPend = query(collection(db, "users"), where("status", "==", "pending"));
+    const pendSnap = await getDocs(qPend);
+    $("pending").innerHTML = pendSnap.size ? "" : "<small>Nimic pending.</small>";
+    pendSnap.forEach((s) => $("pending").appendChild(renderUserCard(s.id, s.data(), true)));
+
+    // Active
+    const qAct = query(collection(db, "users"), where("status", "==", "active"));
+    const actSnap = await getDocs(qAct);
+    $("active").innerHTML = actSnap.size ? "" : "<small>Nimic active.</small>";
+    actSnap.forEach((s) => $("active").appendChild(renderUserCard(s.id, s.data(), false)));
+  } catch (e) {
+    console.error(e);
+    $("err").textContent = e?.message || String(e);
+  }
 }
 
 function renderUserCard(uid, u, isPending) {
   const div = document.createElement("div");
   div.className = "card";
 
-  // Prefill
   const clientType = u?.clientType || "tip1";
   const channel = u?.channel || "internet";
   const globalMarkup = Number(u?.priceRules?.globalMarkup ?? 0);
@@ -174,12 +172,12 @@ function renderUserCard(uid, u, isPending) {
     </div>
   `;
 
-  // set initial values
+  // prefill values
   div.querySelector(".clientType").value = clientType;
   div.querySelector(".channel").value = channel;
   div.querySelector(".globalMarkup").value = String(globalMarkup);
 
-  // populate categories dropdown
+  // dropdown categories
   const catSelect = div.querySelector(".catSelect");
   if (!ALL_CATEGORIES.length) {
     const opt = document.createElement("option");
@@ -195,22 +193,20 @@ function renderUserCard(uid, u, isPending) {
     });
   }
 
-  // render existing overrides list
+  // list overrides
   renderCatList(div, categoriesObj);
 
-  // helpers
   const readForm = () => ({
     clientType: div.querySelector(".clientType").value,
     channel: div.querySelector(".channel").value,
     globalMarkup: Number(div.querySelector(".globalMarkup").value || 0),
   });
 
-  // approve / deactivate
+  // Approve / deactivate
   if (isPending) {
     div.querySelector(".approve").onclick = async () => {
       const f = readForm();
 
-      // VALIDARE OBLIGATORIE (cerința ta)
       if (!f.clientType) return alert("Selectează tip client.");
       if (!f.channel) return alert("Selectează canalul.");
       if (!Number.isFinite(f.globalMarkup) || f.globalMarkup <= 0) {
@@ -240,7 +236,7 @@ function renderUserCard(uid, u, isPending) {
     };
   }
 
-  // set category override
+  // Set category override
   div.querySelector(".setCat").onclick = async () => {
     const catId = div.querySelector(".catSelect").value;
     if (!catId) return alert("Nu există categorie selectată.");
@@ -258,7 +254,7 @@ function renderUserCard(uid, u, isPending) {
     await loadUsers();
   };
 
-  // delete category override
+  // Delete category override
   div.querySelector(".delCat").onclick = async () => {
     const catId = div.querySelector(".catSelect").value;
     if (!catId) return alert("Nu există categorie selectată.");
@@ -282,7 +278,6 @@ function renderCatList(div, categoriesObj) {
     return;
   }
 
-  // afisează frumos: nume categorie dacă există, altfel id
   const nameById = Object.fromEntries(ALL_CATEGORIES.map((c) => [c.id, c.name]));
 
   list.innerHTML = entries
