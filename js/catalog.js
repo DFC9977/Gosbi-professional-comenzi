@@ -1,215 +1,263 @@
-// catalog.js (updated) — categories + correct basePrice display
-// Requires: ./firebase.js to export `db` (Firestore instance).
+// js/catalog.js
+// Catalog module used by js/app.js
+// Exports: loadProducts(db), renderProducts(productsGrid, items, opts)
+//
+// What this fixes:
+// - renders a proper category UI (sidebar if found, otherwise a top bar)
+// - makes the products grid responsive (not "stacked on the side")
+// - avoids hard dependency on a specific HTML structure
 
-import { db } from "./firebase.js";
 import {
   collection,
   getDocs,
   query,
   where,
-  orderBy
+  orderBy,
+  limit
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-let _categories = [];     // [{id, name, sortOrder, active}]
-let _allProducts = [];    // [{...fields, id}]
-let _activeCategoryId = "ALL";
+let _categoriesCache = null;        // [{id,name,sortOrder,active}]
+let _lastItems = [];                // last loaded products
+let _selectedCategoryId = "ALL";    // current filter
 
-function bySortOrderThenName(a, b) {
-  const sa = Number(a.sortOrder ?? 999999);
-  const sb = Number(b.sortOrder ?? 999999);
-  if (sa !== sb) return sa - sb;
-  return String(a.name ?? "").localeCompare(String(b.name ?? ""), "ro", { sensitivity: "base" });
+function asNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
-function formatLei(value) {
-  if (value === null || value === undefined || value === "") return "";
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "";
-  // show without decimals if integer, else 2 decimals
-  const isInt = Math.abs(n - Math.round(n)) < 1e-9;
-  return isInt ? `${Math.round(n)} lei` : `${n.toFixed(2)} lei`;
+function formatMoney(v) {
+  const n = asNumber(v);
+  // keep integers clean, allow .50 etc
+  return (Math.round(n * 100) / 100).toLocaleString("ro-RO", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
-async function loadCategories() {
+async function loadCategories(db) {
+  if (_categoriesCache) return _categoriesCache;
+
+  // categories: active=true, order by sortOrder asc
   const snap = await getDocs(
     query(
       collection(db, "categories"),
       where("active", "==", true),
-      orderBy("sortOrder")
+      orderBy("sortOrder"),
+      limit(500)
     )
   );
 
-  _categories = [];
+  const cats = [];
   snap.forEach((d) => {
-    const c = d.data() || {};
-    _categories.push({
+    const data = d.data() || {};
+    cats.push({
       id: d.id,
-      name: c.name ?? d.id,
-      sortOrder: c.sortOrder ?? 999999,
-      active: c.active ?? true
+      name: String(data.name || d.id),
+      sortOrder: asNumber(data.sortOrder),
+      active: data.active !== false
     });
   });
 
-  _categories.sort(bySortOrderThenName);
-  return _categories;
+  _categoriesCache = cats;
+  return cats;
 }
 
-async function loadAllProducts() {
-  // We load ALL active products once; client-side filter by category.
-  // If you have very many products, we can switch to per-category queries later.
+function uniq(arr) {
+  return [...new Set(arr)];
+}
+
+function findCategoriesHost(productsGrid) {
+  const screen = document.getElementById("screenCatalog") || document.body;
+
+  // Try common "sidebar" hosts (your UI screenshot shows a left rail)
+  const sidebar =
+    screen.querySelector("#categoriesRail") ||
+    screen.querySelector("#categories") ||
+    screen.querySelector(".categories-rail") ||
+    screen.querySelector(".catalog-sidebar") ||
+    screen.querySelector(".sidebar-categories") ||
+    screen.querySelector("[data-categories]");
+
+  if (sidebar) return { el: sidebar, mode: "sidebar" };
+
+  // Fallback: create a top bar above the grid (inside the same parent)
+  let top = screen.querySelector("#categoriesTopBar");
+  if (!top) {
+    top = document.createElement("div");
+    top.id = "categoriesTopBar";
+    top.style.display = "flex";
+    top.style.flexWrap = "wrap";
+    top.style.gap = "8px";
+    top.style.margin = "12px 0 16px 0";
+    top.style.alignItems = "center";
+    top.style.justifyContent = "flex-start";
+
+    // insert before productsGrid
+    const parent = productsGrid?.parentElement || screen;
+    parent.insertBefore(top, productsGrid);
+  }
+  return { el: top, mode: "top" };
+}
+
+function makeCatButton(label, isActive) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = label;
+
+  // Try to match your existing dark theme: keep styles minimal and safe
+  b.style.padding = "8px 10px";
+  b.style.borderRadius = "10px";
+  b.style.border = isActive ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.2)";
+  b.style.background = isActive ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.03)";
+  b.style.color = "inherit";
+  b.style.cursor = "pointer";
+  b.style.whiteSpace = "nowrap";
+
+  return b;
+}
+
+function renderCategoriesUI(productsGrid, categories, allowedCategoryIds) {
+  const host = findCategoriesHost(productsGrid);
+
+  // If it's a sidebar, make it vertical and visible (in case it was empty)
+  if (host.mode === "sidebar") {
+    host.el.style.display = "flex";
+    host.el.style.flexDirection = "column";
+    host.el.style.gap = "10px";
+    host.el.style.padding = host.el.style.padding || "12px";
+  }
+
+  // Build list: ALL + categories that exist in current products
+  const visibleCats = categories.filter((c) => allowedCategoryIds.includes(c.id));
+  const list = [{ id: "ALL", name: "Toate" }, ...visibleCats];
+
+  host.el.innerHTML = "";
+  list.forEach((c) => {
+    const btn = makeCatButton(c.name, _selectedCategoryId === c.id);
+    btn.addEventListener("click", () => {
+      _selectedCategoryId = c.id;
+      // re-render using last loaded items
+      renderProducts(productsGrid, _lastItems, _lastRenderOpts);
+    });
+    host.el.appendChild(btn);
+  });
+}
+
+function ensureGridLayout(productsGrid) {
+  if (!productsGrid) return;
+
+  // Force a responsive grid so cards don't "stack on the side"
+  productsGrid.style.display = "grid";
+  productsGrid.style.gridTemplateColumns = "repeat(auto-fill, minmax(260px, 1fr))";
+  productsGrid.style.gap = "16px";
+  productsGrid.style.alignItems = "stretch";
+  productsGrid.style.justifyItems = "stretch";
+  productsGrid.style.width = "100%";
+  productsGrid.style.boxSizing = "border-box";
+
+  // Sometimes the parent is constrained; try to allow full width
+  const parent = productsGrid.parentElement;
+  if (parent) {
+    parent.style.width = parent.style.width || "100%";
+    parent.style.boxSizing = "border-box";
+  }
+}
+
+function productCardHTML(p, showPrice, priceMultiplier) {
+  const name = String(p.name || "");
+  const priceBase = asNumber(p.basePrice);
+  const price = showPrice ? Math.round(priceBase * asNumber(priceMultiplier) * 100) / 100 : null;
+
+  return `
+    <div class="product-card" style="border:1px solid rgba(255,255,255,0.10); border-radius:16px; padding:14px;">
+      <div style="font-weight:700; line-height:1.25; margin-bottom:10px;">${name}</div>
+      <div style="opacity:0.9; margin-bottom:12px;">
+        ${showPrice ? `Preț: <b>${formatMoney(price)} lei</b>` : `Prețuri vizibile doar pentru clienți activi`}
+      </div>
+      <button type="button" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:inherit;">
+        Comandă (în curând)
+      </button>
+    </div>
+  `;
+}
+
+let _lastRenderOpts = { showPrices: false, priceMultiplier: 1 };
+
+/**
+ * Called by app.js
+ * Must return all active products (filtering & sorting handled client-side).
+ */
+export async function loadProducts(db) {
   const snap = await getDocs(
     query(
       collection(db, "products"),
       where("active", "==", true),
-      orderBy("sortOrder")
+      orderBy("sortOrder"),
+      orderBy("name"),
+      limit(2000)
     )
   );
 
-  _allProducts = [];
+  const items = [];
   snap.forEach((d) => {
-    const p = d.data() || {};
-    _allProducts.push({ id: d.id, ...p });
+    items.push({ id: d.id, ...(d.data() || {}) });
   });
 
-  _allProducts.sort(bySortOrderThenName);
-  return _allProducts;
+  _lastItems = items;
+  return items;
 }
 
 /**
- * Called by app.js after auth/profile are ready.
- * Returns array of products (active only).
+ * Called by app.js
  */
-export async function loadProducts() {
-  // Load in parallel
-  await Promise.all([loadCategories(), loadAllProducts()]);
-  return _allProducts;
-}
-
-function ensureCategoriesBar(container) {
-  // Create once, keep at top
-  let bar = container.querySelector(".categories-bar");
-  if (!bar) {
-    bar = document.createElement("div");
-    bar.className = "categories-bar";
-    bar.style.display = "flex";
-    bar.style.flexWrap = "wrap";
-    bar.style.gap = "8px";
-    bar.style.marginBottom = "14px";
-    container.prepend(bar);
-  }
-  return bar;
-}
-
-function renderCategoryButtons(container, onChange) {
-  const bar = ensureCategoriesBar(container);
-  bar.innerHTML = "";
-
-  const makeBtn = (label, id) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = label;
-    btn.dataset.catId = id;
-
-    // lightweight styling (works even if your CSS doesn't have classes)
-    btn.style.padding = "8px 10px";
-    btn.style.borderRadius = "999px";
-    btn.style.border = "1px solid rgba(255,255,255,0.15)";
-    btn.style.background = (id === _activeCategoryId) ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.15)";
-    btn.style.color = "inherit";
-    btn.style.cursor = "pointer";
-
-    btn.addEventListener("click", () => {
-      _activeCategoryId = id;
-      onChange?.(id);
-    });
-
-    return btn;
+export async function renderProducts(productsGrid, items, opts = {}) {
+  _lastItems = Array.isArray(items) ? items : [];
+  _lastRenderOpts = {
+    showPrices: !!opts.showPrices,
+    priceMultiplier: asNumber(opts.priceMultiplier || 1)
   };
 
-  bar.appendChild(makeBtn("Toate", "ALL"));
-  _categories.forEach((c) => bar.appendChild(makeBtn(c.name, c.id)));
-}
+  ensureGridLayout(productsGrid);
 
-/**
- * Called by app.js:
- *   renderProducts(productsGrid, items, { showPrices })
- */
-export function renderProducts(container, items, { showPrices } = {}) {
-  if (!container) return;
+  const screenHint = document.getElementById("catalogHint");
+  if (screenHint) {
+    screenHint.textContent = _lastRenderOpts.showPrices
+      ? "Cont activ. Prețurile sunt vizibile."
+      : "Ești în așteptare (pending). Vezi catalog fără prețuri.";
+  }
 
-  // We will keep the categories bar, but rebuild product cards.
-  // So: clear everything, then re-add bar and products.
-  container.innerHTML = "";
-  renderCategoryButtons(container, () => {
-    // re-render on category change using cached items
-    renderProducts(container, _allProducts, { showPrices });
-  });
+  // Load categories and render UI
+  try {
+    const db = opts.db || (window.__db || null);
+    // If app.js doesn't pass db, try to grab it from window (optional)
+    const categories = db ? await loadCategories(db) : [];
+    const presentCategoryIds = uniq(_lastItems.map((p) => String(p.categoryId || "")).filter(Boolean));
+    if (categories.length) {
+      renderCategoriesUI(productsGrid, categories, presentCategoryIds);
+    }
+  } catch (e) {
+    // Don't block product rendering if categories fail
+    console.warn("Categories load failed:", e);
+  }
 
-  const filtered = (_activeCategoryId === "ALL")
-    ? (items ?? [])
-    : (items ?? []).filter(p => p.categoryId === _activeCategoryId);
+  // Filter
+  const filtered =
+    _selectedCategoryId === "ALL"
+      ? _lastItems
+      : _lastItems.filter((p) => String(p.categoryId || "") === _selectedCategoryId);
+
+  // Render products
+  if (!productsGrid) return;
+  productsGrid.innerHTML = "";
 
   if (!filtered.length) {
     const empty = document.createElement("div");
-    empty.textContent = "Nu există produse în această categorie.";
     empty.style.opacity = "0.8";
-    container.appendChild(empty);
+    empty.textContent = "Nu există produse în această categorie.";
+    productsGrid.appendChild(empty);
     return;
   }
 
-  // Products grid wrapper (if your CSS already targets the container as a grid, this won't hurt)
-  const grid = document.createElement("div");
-  grid.className = "products-grid";
-  grid.style.display = "grid";
-  grid.style.gridTemplateColumns = "repeat(auto-fill, minmax(220px, 1fr))";
-  grid.style.gap = "14px";
-
   filtered.forEach((p) => {
-    const card = document.createElement("div");
-    card.className = "product-card";
-    card.style.border = "1px solid rgba(255,255,255,0.10)";
-    card.style.borderRadius = "14px";
-    card.style.padding = "12px";
-    card.style.background = "rgba(0,0,0,0.12)";
-
-    const name = document.createElement("div");
-    name.className = "product-name";
-    name.textContent = p.name ?? "(fără nume)";
-    name.style.fontWeight = "700";
-    name.style.marginBottom = "8px";
-
-    const price = document.createElement("div");
-    price.className = "product-price";
-    price.style.marginBottom = "10px";
-
-    if (showPrices) {
-      // IMPORTANT: Firestore field is basePrice (number)
-      // Fallbacks if some products use another field.
-      const v = (p.basePrice ?? p.price ?? p.pret ?? null);
-      const formatted = formatLei(v);
-      price.textContent = formatted ? `Preț: ${formatted}` : "Preț: —";
-    } else {
-      price.textContent = "Prețuri vizibile doar pentru clienți activi";
-      price.style.opacity = "0.85";
-    }
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = "Comandă (în curând)";
-    btn.disabled = true;
-    btn.style.width = "100%";
-    btn.style.padding = "10px 12px";
-    btn.style.borderRadius = "12px";
-    btn.style.border = "1px solid rgba(255,255,255,0.12)";
-    btn.style.background = "rgba(0,0,0,0.15)";
-    btn.style.color = "inherit";
-    btn.style.opacity = "0.9";
-
-    card.appendChild(name);
-    card.appendChild(price);
-    card.appendChild(btn);
-    grid.appendChild(card);
+    const wrap = document.createElement("div");
+    wrap.innerHTML = productCardHTML(p, _lastRenderOpts.showPrices, _lastRenderOpts.priceMultiplier);
+    productsGrid.appendChild(wrap.firstElementChild);
   });
-
-  container.appendChild(grid);
 }
