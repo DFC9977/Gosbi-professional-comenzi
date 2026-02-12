@@ -30,10 +30,11 @@ const screenLoading = document.getElementById("screenLoading");
 const screenLogin = document.getElementById("screenLogin");
 const screenContactGate = document.getElementById("screenContactGate");
 const screenCatalog = document.getElementById("screenCatalog");
+const screenAdmin = document.getElementById("screenAdmin");
 
 const sessionInfo = document.getElementById("sessionInfo");
 const btnLogout = document.getElementById("btnLogout");
-const adminLink = document.getElementById("adminLink");
+const btnAdmin = document.getElementById("btnAdmin");
 
 const loginPhone = document.getElementById("loginPhone");
 const loginPass = document.getElementById("loginPass");
@@ -54,12 +55,13 @@ const productsGrid = document.getElementById("productsGrid");
 const catalogHint = document.getElementById("catalogHint");
 const btnRefreshProducts = document.getElementById("btnRefreshProducts");
 
+const btnBackToCatalog = document.getElementById("btnBackToCatalog");
+const adminFrame = document.getElementById("adminFrame");
+
 /* -------------------- Helpers -------------------- */
 function showOnly(el) {
-  for (const s of [screenLoading, screenLogin, screenContactGate, screenCatalog]) {
-    if (!s) continue;
-    s.hidden = s !== el;
-  }
+  const screens = [screenLoading, screenLogin, screenContactGate, screenCatalog, screenAdmin];
+  for (const s of screens) if (s) s.hidden = (s !== el);
 }
 
 function showNote(el, text, kind = "info") {
@@ -81,11 +83,9 @@ function normalizePhone(p) {
   return String(p || "").replace(/\s+/g, "").trim();
 }
 
-// Simulăm login „telefon + parolă” prin email/password
 function phoneToEmail(phone) {
   const p = normalizePhone(phone);
-  if (!p) return "";
-  return `${p}@phone.local`;
+  return p ? `${p}@phone.local` : "";
 }
 
 async function ensureUserDoc(user) {
@@ -112,7 +112,7 @@ function setSessionText(user) {
   if (!user) {
     sessionInfo.textContent = "Neautentificat";
     btnLogout.hidden = true;
-    if (adminLink) adminLink.style.display = "none";
+    if (btnAdmin) btnAdmin.style.display = "none";
     return;
   }
   const phone = (user.email || "").replace("@phone.local", "");
@@ -122,18 +122,15 @@ function setSessionText(user) {
 
 function setCatalogHint(profile) {
   const status = profile?.status || "pending";
-  if (status === "active") {
-    catalogHint.textContent = "Cont activ. Prețurile sunt vizibile.";
-  } else {
-    catalogHint.textContent = "Ești în așteptare (pending). Vezi catalog fără prețuri.";
-  }
+  catalogHint.textContent =
+    status === "active"
+      ? "Cont activ. Prețurile sunt vizibile."
+      : "Ești în așteptare (pending). Vezi catalog fără prețuri.";
 }
 
-/* -------------------- UI: Contact (county/city) -------------------- */
+/* -------------------- UI: Contact -------------------- */
 function initCountyCity() {
-  if (countySelect && countySelect.options.length <= 1) {
-    fillCountyOptions(countySelect);
-  }
+  fillCountyOptions(countySelect);
 
   countySelect?.addEventListener("change", () => {
     const county = countySelect.value;
@@ -170,7 +167,7 @@ btnRegister?.addEventListener("click", async () => {
   const pass = String(loginPass.value || "");
 
   if (!phone) return showNote(loginMsg, "Completează telefonul.", "err");
-  if (pass.length < 6) return showNote(loginMsg, "Parola trebuie să aibă minim 6 caractere.", "err");
+  if (pass.length < 6) return showNote(loginMsg, "Parola trebuie minim 6 caractere.", "err");
 
   try {
     btnRegister.disabled = true;
@@ -239,22 +236,26 @@ async function refreshCatalog() {
   if (!user) return;
 
   const profile = (await getUserProfile(user.uid)) || (await ensureUserDoc(user));
-
-  // Gate prețuri
   const canSeePrices = profile?.status === "active" || profile?.role === "admin";
 
-  // ✅ FIX: loadProducts(db)
-  const rawItems = await loadProducts(db);
-
-  // Normalize preț (tu vei folosi priceGross în timp; aici păstrăm compatibil)
+  const rawItems = await loadProducts(db); // IMPORTANT: db
   const items = (rawItems || []).map((p) => {
     const base = normalizePrice(p?.priceGross ?? p?.price ?? p?.basePrice ?? p?.base_price ?? p?.basePriceRon);
     return { ...p, priceGross: base, price: base, basePrice: base, base_price: base };
   });
 
-  // ✅ FIX: trecem db către catalog (pentru categorii)
   renderProducts(productsGrid, items, { showPrices: canSeePrices, db });
 }
+
+/* -------------------- Admin screen in-app -------------------- */
+btnAdmin?.addEventListener("click", () => {
+  showOnly(screenAdmin);
+  if (adminFrame) adminFrame.src = "./admin.html?v=" + Date.now(); // refresh
+});
+
+btnBackToCatalog?.addEventListener("click", () => {
+  showOnly(screenCatalog);
+});
 
 /* -------------------- Routing -------------------- */
 async function routeAfterAuth(user) {
@@ -263,12 +264,10 @@ async function routeAfterAuth(user) {
   const base = await ensureUserDoc(user);
   const profile = (await getUserProfile(user.uid)) || base;
 
-  // ✅ Buton Admin în aplicație
-  if (adminLink) {
-    adminLink.style.display = profile?.role === "admin" ? "inline-block" : "none";
-  }
+  // show admin button if admin
+  if (btnAdmin) btnAdmin.style.display = (profile?.role === "admin") ? "inline-block" : "none";
 
-  // Gate contact
+  // contact gate
   if (!isContactComplete(profile)) {
     fullName.value = profile?.contact?.fullName || "";
     address.value = profile?.contact?.address || "";
@@ -279,8 +278,7 @@ async function routeAfterAuth(user) {
     fillCityDatalist(cityList, county);
     cityInput.disabled = !county;
 
-    const city = profile?.contact?.city || "";
-    cityInput.value = city;
+    cityInput.value = profile?.contact?.city || "";
 
     clearNote(contactMsg);
     showOnly(screenContactGate);
@@ -323,7 +321,7 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
-/* -------------------- small util -------------------- */
+/* -------------------- util -------------------- */
 function escapeHtml(s) {
   return String(s || "")
     .replaceAll("&", "&amp;")
