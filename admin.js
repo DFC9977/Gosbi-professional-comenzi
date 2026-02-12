@@ -5,7 +5,7 @@ import { normalizePhone, phoneToEmail } from "./js/auth.js";
 import {
   signInWithEmailAndPassword,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
 import {
@@ -17,11 +17,15 @@ import {
   doc,
   getDoc,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  deleteField,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 const $ = (id) => document.getElementById(id);
 
+let ALL_CATEGORIES = []; // [{id,name}]
+
+// -------------------- AUTH UI --------------------
 $("btnLogin").onclick = async () => {
   $("err").textContent = "";
 
@@ -31,7 +35,7 @@ $("btnLogin").onclick = async () => {
   if (!phone || phone.length < 9) return ($("err").textContent = "Telefon invalid.");
   if (!pass || pass.length < 6) return ($("err").textContent = "Parola minim 6 caractere.");
 
-  const email = phoneToEmail(phone); // domeniul corect: phone.local (din auth.js)
+  const email = phoneToEmail(phone); // EXACT ca în aplicație (phone.local)
 
   try {
     await signInWithEmailAndPassword(auth, email, pass);
@@ -42,6 +46,7 @@ $("btnLogin").onclick = async () => {
 
 $("btnLogout").onclick = () => signOut(auth);
 
+// -------------------- STATE --------------------
 onAuthStateChanged(auth, async (u) => {
   $("me").textContent = "";
   $("pending").innerHTML = "";
@@ -50,21 +55,48 @@ onAuthStateChanged(auth, async (u) => {
 
   if (!u) return;
 
-  // Verifică dacă e admin
+  // verifică dacă e admin
   const meRef = doc(db, "users", u.uid);
   const meSnap = await getDoc(meRef);
   const me = meSnap.exists() ? meSnap.data() : null;
 
-  $("me").innerHTML = `<small>UID: ${u.uid}</small><br><b>role:</b> ${me?.role || "(lipsește)"} | <b>status:</b> ${me?.status || "(lipsește)"}`;
+  $("me").innerHTML = `<small>UID: ${u.uid}</small><br><b>role:</b> ${
+    me?.role || "(lipsește)"
+  } | <b>status:</b> ${me?.status || "(lipsește)"}`;
 
   if (me?.role !== "admin") {
-    $("err").textContent = "Nu ești admin. Setează în Firestore: users/{uid}.role = 'admin'.";
+    $("err").textContent =
+      "Nu ești admin. Setează în Firestore: users/{uid}.role = 'admin'.";
     return;
   }
 
+  await loadCategories();
   await loadUsers();
 });
 
+// -------------------- CATEGORIES --------------------
+async function loadCategories() {
+  const snap = await getDocs(collection(db, "categories"));
+  const cats = [];
+
+  snap.forEach((d) => {
+    const data = d.data() || {};
+    cats.push({
+      id: d.id,
+      name: String(data.name || d.id),
+      sortOrder: Number(data.sortOrder ?? 999999),
+      active: data.active !== false,
+    });
+  });
+
+  // doar active, sortate
+  ALL_CATEGORIES = cats
+    .filter((c) => c.active)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+    .map(({ id, name }) => ({ id, name }));
+}
+
+// -------------------- USERS LIST --------------------
 async function loadUsers() {
   // Pending
   const qPend = query(
@@ -95,6 +127,7 @@ function renderUserCard(uid, u, isPending) {
   const clientType = u?.clientType || "tip1";
   const channel = u?.channel || "internet";
   const globalMarkup = Number(u?.priceRules?.globalMarkup ?? 0);
+  const categoriesObj = u?.priceRules?.categories || {};
 
   div.innerHTML = `
     <b>${u.phone || "(fără phone)"} </b> <small>(${uid})</small><br>
@@ -129,12 +162,14 @@ function renderUserCard(uid, u, isPending) {
     <div class="card" style="background:#fafafa">
       <b>Adaos pe categorie (override)</b><br>
       <small>Dacă nu există override, se aplică adaosul global.</small>
+
       <div class="row" style="margin-top:8px">
-        <input class="catId" placeholder="categoryId (ex: hrana-profesionala)" />
-        <input class="catMarkup" type="number" step="0.01" placeholder="% categorie" />
+        <select class="catSelect"></select>
+        <input class="catMarkup" type="number" step="0.01" min="0" placeholder="% categorie" />
         <button class="setCat">Setează/Actualizează</button>
         <button class="delCat">Șterge override</button>
       </div>
+
       <div class="catList" style="margin-top:8px"></div>
     </div>
   `;
@@ -144,32 +179,42 @@ function renderUserCard(uid, u, isPending) {
   div.querySelector(".channel").value = channel;
   div.querySelector(".globalMarkup").value = String(globalMarkup);
 
-  // Render existing category overrides
-  renderCatList(div, u?.priceRules?.categories || {});
+  // populate categories dropdown
+  const catSelect = div.querySelector(".catSelect");
+  if (!ALL_CATEGORIES.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(nu există categorii)";
+    catSelect.appendChild(opt);
+  } else {
+    ALL_CATEGORIES.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.name;
+      catSelect.appendChild(opt);
+    });
+  }
 
-  // actions
+  // render existing overrides list
+  renderCatList(div, categoriesObj);
+
+  // helpers
   const readForm = () => ({
     clientType: div.querySelector(".clientType").value,
     channel: div.querySelector(".channel").value,
     globalMarkup: Number(div.querySelector(".globalMarkup").value || 0),
   });
 
+  // approve / deactivate
   if (isPending) {
     div.querySelector(".approve").onclick = async () => {
       const f = readForm();
 
       // VALIDARE OBLIGATORIE (cerința ta)
-      if (!f.clientType) {
-        alert("Selectează tip client.");
-        return;
-      }
-      if (!f.channel) {
-        alert("Selectează canalul.");
-        return;
-      }
+      if (!f.clientType) return alert("Selectează tip client.");
+      if (!f.channel) return alert("Selectează canalul.");
       if (!Number.isFinite(f.globalMarkup) || f.globalMarkup <= 0) {
-        alert("Setează adaos global (%) > 0 înainte de aprobare.");
-        return;
+        return alert("Setează adaos global (%) > 0 înainte de aprobare.");
       }
 
       await updateDoc(doc(db, "users", uid), {
@@ -178,9 +223,9 @@ function renderUserCard(uid, u, isPending) {
         channel: f.channel,
         priceRules: {
           globalMarkup: f.globalMarkup,
-          categories: u?.priceRules?.categories || {}
+          categories: categoriesObj || {},
         },
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
       });
 
       await loadUsers();
@@ -189,34 +234,40 @@ function renderUserCard(uid, u, isPending) {
     div.querySelector(".deactivate").onclick = async () => {
       await updateDoc(doc(db, "users", uid), {
         status: "pending",
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
       });
       await loadUsers();
     };
   }
 
-  // Category override set/delete
+  // set category override
   div.querySelector(".setCat").onclick = async () => {
-    const catId = (div.querySelector(".catId").value || "").trim();
+    const catId = div.querySelector(".catSelect").value;
+    if (!catId) return alert("Nu există categorie selectată.");
+
     const markup = Number(div.querySelector(".catMarkup").value || 0);
-    if (!catId) return alert("Scrie categoryId.");
+    if (!Number.isFinite(markup) || markup <= 0) {
+      return alert("Adaos categorie trebuie să fie > 0.");
+    }
 
     await updateDoc(doc(db, "users", uid), {
       [`priceRules.categories.${catId}`]: markup,
-      updatedAt: serverTimestamp()
+      updatedAt: serverTimestamp(),
     });
+
     await loadUsers();
   };
 
+  // delete category override
   div.querySelector(".delCat").onclick = async () => {
-    const catId = (div.querySelector(".catId").value || "").trim();
-    if (!catId) return alert("Scrie categoryId.");
+    const catId = div.querySelector(".catSelect").value;
+    if (!catId) return alert("Nu există categorie selectată.");
 
-    const { deleteField } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js");
     await updateDoc(doc(db, "users", uid), {
       [`priceRules.categories.${catId}`]: deleteField(),
-      updatedAt: serverTimestamp()
+      updatedAt: serverTimestamp(),
     });
+
     await loadUsers();
   };
 
@@ -230,7 +281,15 @@ function renderCatList(div, categoriesObj) {
     list.innerHTML = "<small>(fără override pe categorii)</small>";
     return;
   }
+
+  // afisează frumos: nume categorie dacă există, altfel id
+  const nameById = Object.fromEntries(ALL_CATEGORIES.map((c) => [c.id, c.name]));
+
   list.innerHTML = entries
-    .map(([k, v]) => `<small><b>${k}</b>: ${Number(v)}%</small>`)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([id, v]) => {
+      const label = nameById[id] ? `${nameById[id]} <small style="opacity:.6">(${id})</small>` : id;
+      return `<small><b>${label}</b>: ${Number(v)}%</small>`;
+    })
     .join("<br>");
 }
