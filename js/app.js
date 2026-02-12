@@ -122,6 +122,7 @@ function setSessionText(user) {
 
 function setCatalogHint(profile) {
   const status = profile?.status || "pending";
+  if (!catalogHint) return;
   catalogHint.textContent =
     status === "active"
       ? "Cont activ. Prețurile sunt vizibile."
@@ -240,26 +241,17 @@ async function refreshCatalog() {
 
   const rawItems = await loadProducts(db);
 
-  // normalize prețuri: folosim priceGross ca bază (preț cu TVA)
   const items = (rawItems || []).map((p) => {
     const base = normalizePrice(
       p?.priceGross ?? p?.basePrice ?? p?.base_price ?? p?.price ?? p?.basePriceRon
     );
-    return {
-      ...p,
-      // standardizăm pentru catalog.js
-      priceGross: base,
-      basePrice: base,
-      base_price: base,
-      price: base,
-    };
+    return { ...p, priceGross: base, basePrice: base, base_price: base, price: base };
   });
 
-  // ✅ IMPORTANT: trimitem priceRules în catalog ca să aplice adaosurile
   renderProducts(productsGrid, items, {
     showPrices: canSeePrices,
     db,
-    priceRules: profile?.priceRules || null
+    priceRules: profile?.priceRules || null,
   });
 }
 
@@ -281,10 +273,6 @@ async function routeAfterAuth(user) {
   const profile = (await getUserProfile(user.uid)) || base;
 
   if (btnAdmin) btnAdmin.style.display = (profile?.role === "admin") ? "inline-block" : "none";
-
-  if (!isContactComplete Reiderr(profile)) {
-    // (safety) - dacă ai greșit funcția, pune la loc isContactComplete(profile)
-  }
 
   if (!isContactComplete(profile)) {
     fullName.value = profile?.contact?.fullName || "";
