@@ -20,19 +20,10 @@
     </div>
 
     <div class="actions">
-      <!-- BUTON ADMIN (apare doar dacă ești admin) -->
-      <a
-        id="adminLink"
-        href="./admin.html"
-        class="btn ghost"
-        style="display:none; text-decoration:none;"
-      >
-        Admin
-      </a>
+      <!-- Admin (apare doar pentru role=admin) -->
+      <button id="btnAdmin" class="btn ghost" style="display:none;">Admin</button>
 
-      <button id="btnLogout" class="btn ghost" hidden>
-        Logout
-      </button>
+      <button id="btnLogout" class="btn ghost" hidden>Logout</button>
     </div>
   </header>
 
@@ -48,33 +39,18 @@
     <!-- LOGIN -->
     <section id="screenLogin" class="card" hidden>
       <h2>Autentificare</h2>
-      <p class="muted">
-        V1: login cu telefon + parolă (simulat peste Email/Password)
-      </p>
+      <p class="muted">Login cu telefon + parolă (prin Email/Password)</p>
 
       <div class="grid">
-
         <label class="field">
           <span>Telefon</span>
-          <input
-            id="loginPhone"
-            type="tel"
-            inputmode="tel"
-            placeholder="07xxxxxxxx"
-            autocomplete="username"
-          />
+          <input id="loginPhone" type="tel" inputmode="tel" placeholder="07xxxxxxxx" autocomplete="username" />
         </label>
 
         <label class="field">
           <span>Parolă</span>
-          <input
-            id="loginPass"
-            type="password"
-            placeholder="Parola"
-            autocomplete="current-password"
-          />
+          <input id="loginPass" type="password" placeholder="Parola" autocomplete="current-password" />
         </label>
-
       </div>
 
       <div class="row">
@@ -88,10 +64,7 @@
     <!-- CONTACT GATE -->
     <section id="screenContactGate" class="card" hidden>
       <h2>Date de contact</h2>
-
-      <p class="muted">
-        Pentru a vedea produsele, te rugăm să completezi datele de contact.
-      </p>
+      <p class="muted">Pentru a vedea produsele, te rugăm să completezi datele de contact.</p>
 
       <div class="grid">
 
@@ -102,11 +75,7 @@
 
         <label class="field">
           <span>Adresă completă</span>
-          <textarea
-            id="address"
-            rows="3"
-            placeholder="Stradă, nr., bloc, sc., ap., etc."
-          ></textarea>
+          <textarea id="address" rows="3" placeholder="Stradă, nr., bloc, sc., ap., etc."></textarea>
         </label>
 
         <label class="field">
@@ -118,13 +87,9 @@
 
         <label class="field">
           <span>Localitate</span>
-          <!-- FIX: era <<input ... -->
           <input id="cityInput" list="cityList" disabled />
           <datalist id="cityList"></datalist>
-
-          <div class="hint">
-            Localitatea se activează după alegerea județului.
-          </div>
+          <div class="hint">Localitatea se activează după alegerea județului.</div>
         </label>
 
       </div>
@@ -151,13 +116,29 @@
       <div id="productsGrid" class="products"></div>
     </section>
 
+    <!-- ADMIN (în aceeași aplicație, nu tab nou) -->
+    <section id="screenAdmin" class="card" hidden>
+      <div class="row between">
+        <div>
+          <h2>Admin</h2>
+          <p class="muted">Aprobări clienți / adaos / recomandări</p>
+        </div>
+        <button id="btnBackToCatalog" class="btn">Înapoi la catalog</button>
+      </div>
+
+      <iframe
+        id="adminFrame"
+        src="./admin.html"
+        style="width:100%; height:75vh; border:0; border-radius:14px;"
+      ></iframe>
+    </section>
+
   </main>
 
-  <!-- FOOTER -->
   <footer class="footer">
     <span class="muted">v1 • Firebase Spark • GitHub Pages</span>
   </footer>
 
-  <script type="module" src="./js/app.js?v=10"></script>
+  <script type="module" src="./js/app.js?v=20"></script>
 </body>
 </html>
