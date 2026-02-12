@@ -8,7 +8,12 @@ import {
   onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
-import { doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 import {
   fillCountyOptions,
@@ -28,6 +33,7 @@ const screenCatalog = document.getElementById("screenCatalog");
 
 const sessionInfo = document.getElementById("sessionInfo");
 const btnLogout = document.getElementById("btnLogout");
+const adminLink = document.getElementById("adminLink");
 
 const loginPhone = document.getElementById("loginPhone");
 const loginPass = document.getElementById("loginPass");
@@ -79,7 +85,6 @@ function normalizePhone(p) {
 function phoneToEmail(phone) {
   const p = normalizePhone(phone);
   if (!p) return "";
-  // ex: 07xxxx -> "07xxxx@phone.local"
   return `${p}@phone.local`;
 }
 
@@ -88,7 +93,6 @@ async function ensureUserDoc(user) {
   const snap = await getDoc(ref);
   if (snap.exists()) return snap.data();
 
-  // Creează profil minim la primul login/register
   const phone = (user.email || "").replace("@phone.local", "");
   const payload = {
     createdAt: serverTimestamp(),
@@ -97,9 +101,7 @@ async function ensureUserDoc(user) {
     status: "pending",
     phone: phone || "",
     email: user.email || "",
-    contact: {
-      completed: false,
-    },
+    contact: { completed: false },
   };
 
   await setDoc(ref, payload, { merge: true });
@@ -110,6 +112,7 @@ function setSessionText(user) {
   if (!user) {
     sessionInfo.textContent = "Neautentificat";
     btnLogout.hidden = true;
+    if (adminLink) adminLink.style.display = "none";
     return;
   }
   const phone = (user.email || "").replace("@phone.local", "");
@@ -128,12 +131,10 @@ function setCatalogHint(profile) {
 
 /* -------------------- UI: Contact (county/city) -------------------- */
 function initCountyCity() {
-  // Populează județe o singură dată
   if (countySelect && countySelect.options.length <= 1) {
     fillCountyOptions(countySelect);
   }
 
-  // La schimbare județ: populează lista și activează input-ul oraș
   countySelect?.addEventListener("change", () => {
     const county = countySelect.value;
     fillCityDatalist(cityList, county);
@@ -183,19 +184,12 @@ btnRegister?.addEventListener("click", async () => {
 });
 
 btnLogout?.addEventListener("click", async () => {
-  try {
-    await signOut(auth);
-  } catch (e) {
-    // nu blocăm UI
-  }
+  try { await signOut(auth); } catch (e) {}
 });
 
 btnBackToLogin?.addEventListener("click", async () => {
   clearNote(contactMsg);
-  // Înapoi = logout ca să nu rămână „în sesiune”
-  try {
-    await signOut(auth);
-  } catch (e) {}
+  try { await signOut(auth); } catch (e) {}
 });
 
 /* -------------------- Contact Save -------------------- */
@@ -235,7 +229,6 @@ btnRefreshProducts?.addEventListener("click", async () => {
 });
 
 function normalizePrice(v) {
-  // Accept number or numeric string; fallback 0
   if (v === null || v === undefined) return 0;
   const n = typeof v === "number" ? v : Number(String(v).replace(",", ".").trim());
   return Number.isFinite(n) ? n : 0;
@@ -247,23 +240,19 @@ async function refreshCatalog() {
 
   const profile = (await getUserProfile(user.uid)) || (await ensureUserDoc(user));
 
-  // IMPORTANT: price visibility gate
+  // Gate prețuri
   const canSeePrices = profile?.status === "active" || profile?.role === "admin";
 
-  // load products from the shared loader, then normalize price fields
+  // ✅ FIX: loadProducts(db)
   const rawItems = await loadProducts(db);
 
+  // Normalize preț (tu vei folosi priceGross în timp; aici păstrăm compatibil)
   const items = (rawItems || []).map((p) => {
-    const base = normalizePrice(p?.basePrice ?? p?.base_price ?? p?.price ?? p?.basePriceRon);
-    return {
-      ...p,
-      // make sure all downstream functions find a numeric base price
-      basePrice: base,
-      base_price: base,
-      price: base,
-    };
+    const base = normalizePrice(p?.priceGross ?? p?.price ?? p?.basePrice ?? p?.base_price ?? p?.basePriceRon);
+    return { ...p, priceGross: base, price: base, basePrice: base, base_price: base };
   });
 
+  // ✅ FIX: trecem db către catalog (pentru categorii)
   renderProducts(productsGrid, items, { showPrices: canSeePrices, db });
 }
 
@@ -271,15 +260,16 @@ async function refreshCatalog() {
 async function routeAfterAuth(user) {
   setSessionText(user);
 
-  // 1) asigură document user
   const base = await ensureUserDoc(user);
-
-  // 2) ia profilul (dacă există deja cu contact complet etc.)
   const profile = (await getUserProfile(user.uid)) || base;
 
-  // 3) gate: date contact
+  // ✅ Buton Admin în aplicație
+  if (adminLink) {
+    adminLink.style.display = profile?.role === "admin" ? "inline-block" : "none";
+  }
+
+  // Gate contact
   if (!isContactComplete(profile)) {
-    // prefill
     fullName.value = profile?.contact?.fullName || "";
     address.value = profile?.contact?.address || "";
 
@@ -297,15 +287,12 @@ async function routeAfterAuth(user) {
     return;
   }
 
-  // 4) catalog
   setCatalogHint(profile);
   showOnly(screenCatalog);
 
-  // încarcă produse
   try {
     await refreshCatalog();
   } catch (e) {
-    // dacă rulele sunt greșite / nu ai read pe products, vei vedea aici blocajul
     productsGrid.innerHTML = `<div class="note">Eroare la încărcarea produselor: ${escapeHtml(e?.message || "unknown")}</div>`;
   }
 }
@@ -330,7 +317,6 @@ onAuthStateChanged(auth, async (user) => {
   try {
     await routeAfterAuth(user);
   } catch (e) {
-    // fallback: dacă ceva crapă, măcar să nu rămână „blocată” fără mesaj
     setSessionText(user);
     showOnly(screenLogin);
     showNote(loginMsg, `Eroare: ${e?.message || "unknown"}`, "err");
