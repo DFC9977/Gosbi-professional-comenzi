@@ -1,134 +1,146 @@
 // js/orders.js
-// Create order with atomic counter + snapshot of items (priceFinal, qty, subtotals)
+// Submit order with full client snapshot + product snapshot
+
+import { auth, db } from "./firebase.js";
 
 import {
-  doc,
   collection,
+  doc,
+  getDoc,
+  getDocs,
   runTransaction,
   serverTimestamp,
   Timestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-import { db } from "./firebase.js";
-import { getItemsArray, clearCart } from "./cart.js";
+/* ==============================
+   Helpers
+================================ */
 
-function asNumber(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+function round2(n) {
+  return Math.round(Number(n || 0) * 100) / 100;
 }
 
-function buildSnapshotItems(productsFinalById) {
-  const cartItems = getItemsArray().filter((x) => asNumber(x.qty) > 0);
+/* ==============================
+   Main submitOrder
+================================ */
 
-  if (!cartItems.length) {
-    const err = new Error("Cart is empty");
-    err.code = "CART_EMPTY";
-    throw err;
+export async function submitOrder({ clientId }) {
+  if (!clientId) throw new Error("clientId lipsă.");
+
+  const user = auth.currentUser;
+  if (!user) throw new Error("Trebuie să fii logat.");
+
+  /* ==========================
+     1️⃣ Luăm datele clientului
+  ========================== */
+
+  const userRef = doc(db, "users", clientId);
+  const userSnap = await getDoc(userRef);
+
+  if (!userSnap.exists()) {
+    throw new Error("Document client inexistent.");
   }
 
-  const items = [];
-  let total = 0;
+  const userData = userSnap.data() || {};
+  const contact = userData.contact || {};
 
-  for (const ci of cartItems) {
-    const p = productsFinalById?.[ci.productId];
-    if (!p) continue;
+  const clientSnapshot = {
+    uid: clientId,
+    email: userData.email || "",
+    phone: userData.phone || "",
+    fullName: contact.fullName || "",
+    county: contact.county || "",
+    city: contact.city || "",
+    address: contact.address || "",
+    clientType: userData.clientType || "",
+    channel: userData.channel || ""
+  };
 
-    const qty = asNumber(ci.qty);
-    const unitPriceFinal = asNumber(p.priceFinal ?? p.priceBase ?? p.priceGross ?? p.price ?? 0);
-    const lineTotal = Math.round(unitPriceFinal * qty * 100) / 100;
+  /* ==========================
+     2️⃣ Luăm coșul din localStorage
+  ========================== */
 
-    total += lineTotal;
+  const rawCart = JSON.parse(localStorage.getItem("cart") || "[]");
 
-    items.push({
-      productId: String(ci.productId),
-      name: String(p.name || ""),
+  if (!Array.isArray(rawCart) || rawCart.length === 0) {
+    throw new Error("Coș gol.");
+  }
+
+  /* ==========================
+     3️⃣ Construim snapshot produse
+  ========================== */
+
+  const items = rawCart.map((item) => {
+    const qty = Number(item.qty || 0);
+    const unitPriceFinal = round2(item.unitPriceFinal || item.priceFinal || 0);
+    const lineTotal = round2(unitPriceFinal * qty);
+
+    return {
+      productId: item.productId || item.id,
+      name: item.name || "",
       qty,
       unitPriceFinal,
       lineTotal
-    });
-  }
+    };
+  });
 
-  total = Math.round(total * 100) / 100;
+  const total = round2(
+    items.reduce((sum, i) => sum + i.lineTotal, 0)
+  );
 
-  if (!items.length) {
-    const err = new Error("No valid items in cart");
-    err.code = "NO_VALID_ITEMS";
-    throw err;
-  }
-
-  return { items, total };
-}
-
-/**
- * submitOrder
- * - increments counters/orders.current atomically
- * - creates order document in same transaction (no gaps)
- * - clears cart on success
- */
-export async function submitOrder({ clientId, clientName }) {
-  if (!clientId) {
-    const err = new Error("Missing clientId");
-    err.code = "MISSING_CLIENT";
-    throw err;
-  }
-
-  const productsFinalById =
-    window.__PRODUCTS_FINAL_BY_ID__ ||
-    window.__PRODUCTS_BY_ID__ ||
-    {};
-
-  const { items, total } = buildSnapshotItems(productsFinalById);
+  /* ==========================
+     4️⃣ Generare număr comandă
+  ========================== */
 
   const counterRef = doc(db, "counters", "orders");
-  const orderRef = doc(collection(db, "orders"));
 
-  const now = Timestamp.now(); // ✅ safe inside arrays/objects
+  const result = await runTransaction(db, async (transaction) => {
+    const counterSnap = await transaction.get(counterRef);
 
-  const { orderNumber } = await runTransaction(db, async (tx) => {
-    const snap = await tx.get(counterRef);
+    let nextNumber = 1000;
 
-    let next = 1000;
-
-    if (!snap.exists()) {
-      tx.set(counterRef, { current: 1000 });
-      next = 1000;
-    } else {
-      const current = asNumber(snap.data()?.current ?? 1000);
-      next = current + 1;
-      tx.update(counterRef, { current: next });
+    if (counterSnap.exists()) {
+      const current = counterSnap.data().lastNumber || 1000;
+      nextNumber = current + 1;
     }
 
-    const payload = {
-      orderNumber: next,
-      clientId,
-      clientName: clientName || "",
+    transaction.set(counterRef, {
+      lastNumber: nextNumber
+    }, { merge: true });
 
+    const orderRef = doc(collection(db, "orders"));
+
+    const payload = {
+      orderNumber: nextNumber,
+      clientId,
+      clientSnapshot,
       items,
       total,
-
       status: "NEW",
       statusHistory: [
         {
           status: "NEW",
-          at: now,        // ✅ Timestamp value, not serverTimestamp()
+          at: Timestamp.now(),   // 🔥 IMPORTANT: NU serverTimestamp
           adminUid: null
         }
       ],
-
-      createdAt: serverTimestamp(), // ✅ ok at root
-      updatedAt: serverTimestamp()  // ✅ ok at root
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     };
 
-    tx.set(orderRef, payload);
+    transaction.set(orderRef, payload);
 
-    return { orderNumber: next };
+    return {
+      orderNumber: nextNumber
+    };
   });
 
-  clearCart();
+  /* ==========================
+     5️⃣ Reset cart
+  ========================== */
 
-  return {
-    orderId: orderRef.id,
-    orderNumber,
-    total
-  };
+  localStorage.removeItem("cart");
+
+  return result;
 }
