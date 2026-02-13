@@ -1,10 +1,17 @@
-// /js/cart.js
+// js/cart.js
+// Stable cart module (localStorage) + emits "cart:updated"
+// Cart schema:
+// { items: { [productId]: qty }, updatedAt: number }
 
-const STORAGE_KEY = "gosbi_cart_v1";
+const STORAGE_KEY = "gosbi_cart_v2";
 
 /* =========================
-   Internal Helpers
+   Internal helpers
 ========================= */
+
+function emptyCart() {
+  return { items: {}, updatedAt: Date.now() };
+}
 
 function safeParse(json) {
   try {
@@ -14,22 +21,25 @@ function safeParse(json) {
   }
 }
 
-function persist(cart) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cart));
-  window.dispatchEvent(new CustomEvent("cart:updated", { detail: cart }));
+function canUseStorage() {
+  try {
+    const k = "__t";
+    localStorage.setItem(k, "1");
+    localStorage.removeItem(k);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function emptyCart() {
-  return {
-    items: {} // { productId: qty }
-  };
-}
+const _hasStorage = canUseStorage();
 
-/* =========================
-   Public API
-========================= */
+// in-memory fallback (rare, but protects from crashes)
+let _memCart = emptyCart();
 
-export function getCart() {
+function readCart() {
+  if (!_hasStorage) return _memCart;
+
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return emptyCart();
 
@@ -37,77 +47,102 @@ export function getCart() {
   if (!parsed || typeof parsed !== "object") return emptyCart();
   if (!parsed.items || typeof parsed.items !== "object") return emptyCart();
 
-  return parsed;
+  return {
+    items: parsed.items,
+    updatedAt: Number(parsed.updatedAt || Date.now())
+  };
 }
 
-export function setQuantity(productId, qty) {
-  const cart = getCart();
-  const quantity = Math.max(0, Number(qty) || 0);
+function writeCart(cart) {
+  const clean = {
+    items: cart?.items && typeof cart.items === "object" ? cart.items : {},
+    updatedAt: Date.now()
+  };
 
-  if (quantity === 0) {
-    delete cart.items[productId];
+  if (_hasStorage) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+    } catch {
+      // if quota exceeded, fallback to memory
+      _memCart = clean;
+    }
   } else {
-    cart.items[productId] = quantity;
+    _memCart = clean;
   }
 
-  persist(cart);
-  return cart;
+  // single source of truth: notify UI
+  window.dispatchEvent(new CustomEvent("cart:updated", { detail: clean }));
+  return clean;
 }
 
-export function increment(productId, step = 1) {
-  const cart = getCart();
-  const current = Number(cart.items[productId] || 0);
-  const next = Math.max(0, current + Number(step));
-
-  if (next === 0) {
-    delete cart.items[productId];
-  } else {
-    cart.items[productId] = next;
-  }
-
-  persist(cart);
-  return cart;
+function asQty(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.floor(n));
 }
 
-export function removeItem(productId) {
-  const cart = getCart();
-  delete cart.items[productId];
-  persist(cart);
-  return cart;
-}
+/* =========================
+   Public API
+========================= */
 
-export function clearCart() {
-  const cart = emptyCart();
-  persist(cart);
-  return cart;
+export function getCart() {
+  return readCart();
 }
 
 export function getItemsArray() {
-  const cart = getCart();
+  const cart = readCart();
+  const items = cart.items || {};
 
-  return Object.entries(cart.items).map(([productId, qty]) => ({
-    productId,
-    qty: Number(qty)
-  }));
-}
-
-export function getTotal(productsById) {
-  const items = getItemsArray();
-
-  let total = 0;
-
-  for (const item of items) {
-    const product = productsById[item.productId];
-    if (!product) continue;
-
-    const price = Number(product.priceBase || 0);
-    total += price * item.qty;
-  }
-
-  return Math.round(total * 100) / 100;
+  return Object.entries(items)
+    .map(([productId, qty]) => ({ productId, qty: asQty(qty) }))
+    .filter((x) => x.productId && x.qty > 0);
 }
 
 export function getItemCount() {
-  const items = getItemsArray();
-  return items.reduce((sum, item) => sum + item.qty, 0);
+  return getItemsArray().reduce((sum, it) => sum + it.qty, 0);
+}
+
+export function getQty(productId) {
+  if (!productId) return 0;
+  const cart = readCart();
+  return asQty(cart.items?.[productId] || 0);
+}
+
+export function setQuantity(productId, qty) {
+  if (!productId) return readCart();
+
+  const cart = readCart();
+  const items = { ...(cart.items || {}) };
+  const q = asQty(qty);
+
+  if (q <= 0) delete items[productId];
+  else items[productId] = q;
+
+  return writeCart({ items });
+}
+
+export function increment(productId, step = 1) {
+  if (!productId) return readCart();
+
+  const cart = readCart();
+  const items = { ...(cart.items || {}) };
+  const current = asQty(items[productId] || 0);
+  const next = asQty(current + Number(step || 0));
+
+  if (next <= 0) delete items[productId];
+  else items[productId] = next;
+
+  return writeCart({ items });
+}
+
+export function removeItem(productId) {
+  if (!productId) return readCart();
+  const cart = readCart();
+  const items = { ...(cart.items || {}) };
+  delete items[productId];
+  return writeCart({ items });
+}
+
+export function clearCart() {
+  return writeCart(emptyCart());
 }
