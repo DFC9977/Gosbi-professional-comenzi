@@ -1,5 +1,6 @@
 // js/catalog.js
-// Catalog UI (mobile-first) + cart sticky bar + summary + submit event with items
+// Catalog (mobile-first) + categories + cart controls + sticky cart bar + summary
+// ✅ always dispatches submit event with detail.items
 // Exports: loadProducts(db), renderProducts(productsGrid, items, opts)
 
 import {
@@ -26,6 +27,7 @@ let _categoriesCache = null;
 let _lastItems = [];
 let _selectedCategoryId = "ALL";
 let _lastRenderOpts = { showPrices: false, db: null, priceRules: null };
+let _lastGridEl = null;
 
 /* =========================
    Helpers
@@ -35,30 +37,28 @@ function asNumber(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
-
-function round2(v) {
-  return Math.round(asNumber(v) * 100) / 100;
+function round2(n) {
+  return Math.round(asNumber(n) * 100) / 100;
 }
-
 function formatMoney(v) {
-  return round2(v).toLocaleString("ro-RO", { maximumFractionDigits: 2 });
+  return round2(v).toLocaleString("ro-RO", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  });
 }
-
 function uniq(arr) {
   return [...new Set(arr)];
 }
 
 /* =========================
-   Pricing
-   (Tu ai zis pricebase, dar păstrăm compatibilitatea:
-    - citim priceGross/basePrice/price
-    - aplicăm markup dacă există priceRules, altfel 0
+   Pricing (base gross + markup)
 ========================= */
 
 function getBaseGrossPrice(p) {
   return asNumber(p?.priceGross ?? p?.basePrice ?? p?.base_price ?? p?.price ?? 0);
 }
 
+// if you ever use rules: priceRules.globalMarkup or priceRules.categories[catId]
 function getMarkupForProduct(p, priceRules) {
   const catId = String(p?.categoryId || "");
   const byCat = priceRules?.categories?.[catId];
@@ -129,7 +129,9 @@ function catChip(label, active) {
   b.textContent = label;
   b.style.padding = "10px 12px";
   b.style.borderRadius = "14px";
-  b.style.border = active ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.18)";
+  b.style.border = active
+    ? "1px solid rgba(255,255,255,0.55)"
+    : "1px solid rgba(255,255,255,0.18)";
   b.style.background = active ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.05)";
   b.style.color = "inherit";
   b.style.cursor = "pointer";
@@ -142,7 +144,9 @@ async function renderCategories(productsGrid) {
   if (!db) return;
 
   const categories = await loadCategories(db);
-  const presentCategoryIds = uniq(_lastItems.map((p) => String(p.categoryId || "")).filter(Boolean));
+  const presentCategoryIds = uniq(
+    _lastItems.map((p) => String(p.categoryId || "")).filter(Boolean)
+  );
 
   const host = ensureCategoriesHost(productsGrid);
   host.innerHTML = "";
@@ -160,7 +164,7 @@ async function renderCategories(productsGrid) {
 }
 
 /* =========================
-   Layout + CSS
+   CSS + Layout
 ========================= */
 
 function ensureGridLayout(productsGrid) {
@@ -187,6 +191,7 @@ function ensureCatalogCSSOnce() {
       display: flex;
       flex-direction: column;
       gap: 10px;
+      min-height: 140px;
     }
     .btn-soft {
       padding: 10px 12px;
@@ -215,9 +220,12 @@ function ensureCatalogCSSOnce() {
       color: inherit;
       font-size: 20px;
       cursor: pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
     }
     .qty-input {
-      width: 72px;
+      width: 78px;
       height: 40px;
       border-radius: 12px;
       border: 1px solid rgba(255,255,255,0.18);
@@ -262,6 +270,66 @@ function ensureCatalogCSSOnce() {
 }
 
 /* =========================
+   Build map of final prices for current view
+========================= */
+
+function buildProductsFinalById() {
+  const map = {};
+  _lastItems.forEach((p) => {
+    const priceFinal = computeFinalPrice(p, true, _lastRenderOpts.priceRules) ?? 0;
+    map[p.id] = { ...p, priceFinal };
+  });
+  // optional debug / reuse
+  window.__PRODUCTS_FINAL_BY_ID__ = map;
+  return map;
+}
+
+function buildCartSummaryLines() {
+  const productsById = buildProductsFinalById();
+
+  return getItemsArray()
+    .filter((x) => asNumber(x.qty) > 0)
+    .map((x) => {
+      const pid = String(x.productId || "");
+      const p = productsById[pid];
+      const unit = round2(p?.priceFinal || 0);
+      const qty = asNumber(x.qty);
+      return {
+        productId: pid,
+        name: String(p?.name || "Produs"),
+        qty,
+        unit,
+        lineTotal: round2(unit * qty)
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "ro"));
+}
+
+function computeCartTotal() {
+  return round2(buildCartSummaryLines().reduce((s, it) => s + it.lineTotal, 0));
+}
+
+/* =========================
+   Sync qty inputs in cards (fix “0”)
+========================= */
+
+function syncVisibleQtyInputs(productsGrid) {
+  if (!productsGrid) return;
+
+  const map = {};
+  getItemsArray().forEach((x) => {
+    map[String(x.productId)] = asNumber(x.qty || 0);
+  });
+
+  productsGrid.querySelectorAll(".product-card").forEach((card) => {
+    const pid = card.dataset.productId;
+    const input = card.querySelector('input[data-role="qty"]');
+    if (!input) return;
+    input.value = String(map[pid] || 0);
+  });
+}
+
+/* =========================
    Product Card HTML
 ========================= */
 
@@ -275,7 +343,11 @@ function productCardHTML(p) {
     <div class="product-card" data-product-id="${id}">
       <div style="font-weight:900; font-size:16px; line-height:1.25;">${name}</div>
       <div style="opacity:0.9; font-size:14px;">
-        ${showPrice ? `Preț: <b>${formatMoney(finalPrice)} lei</b>` : `Prețuri vizibile doar pentru clienți activi`}
+        ${
+          showPrice
+            ? `Preț: <b>${formatMoney(finalPrice)} lei</b>`
+            : `Prețuri vizibile doar pentru clienți activi`
+        }
       </div>
 
       ${
@@ -293,51 +365,12 @@ function productCardHTML(p) {
           `
           : `
           <button class="btn-ghost" type="button" disabled style="opacity:0.6; cursor:not-allowed;">
-            Comandă (indisponibil)
+            Comandă indisponibilă
           </button>
           `
       }
     </div>
   `;
-}
-
-/* =========================
-   Cart totals based on current rendered prices
-========================= */
-
-function buildProductsFinalById() {
-  const map = {};
-  _lastItems.forEach((p) => {
-    const priceFinal = computeFinalPrice(p, true, _lastRenderOpts.priceRules) ?? 0;
-    map[p.id] = { ...p, priceFinal };
-  });
-
-  // expose for orders.js snapshot (optional)
-  window.__PRODUCTS_FINAL_BY_ID__ = map;
-  return map;
-}
-
-function buildCartSummaryLines() {
-  const productsById = buildProductsFinalById();
-  return getItemsArray()
-    .filter((x) => Number(x.qty) > 0)
-    .map((x) => {
-      const p = productsById[x.productId];
-      const unit = round2(p?.priceFinal || 0);
-      const qty = Number(x.qty || 0);
-      return {
-        productId: x.productId,
-        name: String(p?.name || "Produs"),
-        qty,
-        unit,
-        lineTotal: round2(unit * qty)
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, "ro"));
-}
-
-function computeCartTotal() {
-  return round2(buildCartSummaryLines().reduce((s, it) => s + it.lineTotal, 0));
 }
 
 /* =========================
@@ -396,7 +429,7 @@ function ensureStickyBar() {
     applyBodyPaddingForBar();
   });
 
-  // ✅ SUBMIT: trimite items în event.detail
+  // ✅ SUBMIT: ALWAYS send items via detail
   bar.querySelector("#btnSubmitOrder").addEventListener("click", () => {
     const count = getItemCount();
     if (count <= 0) {
@@ -419,14 +452,6 @@ function ensureStickyBar() {
     );
   });
 
-  // live update on cart changes
-  window.addEventListener("cart:updated", () => {
-    updateStickyBar(bar);
-    const wrap = bar.querySelector("#cartSummaryWrap");
-    if (wrap.style.display !== "none") renderSummary(bar);
-  });
-
-  // resize padding
   window.addEventListener("resize", applyBodyPaddingForBar);
 
   updateStickyBar(bar);
@@ -462,10 +487,16 @@ function renderSummary(bar) {
 
     row.innerHTML = `
       <div style="min-width:0;">
-        <div style="font-weight:900; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.name}</div>
-        <div style="font-size:12px; opacity:0.9; margin-top:2px;">${it.qty} × ${formatMoney(it.unit)} lei</div>
+        <div style="font-weight:900; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          ${it.name}
+        </div>
+        <div style="font-size:12px; opacity:0.9; margin-top:2px;">
+          ${it.qty} × ${formatMoney(it.unit)} lei
+        </div>
       </div>
-      <div style="font-weight:900; font-size:13px;">${formatMoney(it.lineTotal)} lei</div>
+      <div style="font-weight:900; font-size:13px;">
+        ${formatMoney(it.lineTotal)} lei
+      </div>
     `;
     drawer.appendChild(row);
   });
@@ -528,6 +559,13 @@ function ensureCartBindings(productsGrid) {
     if (action === "dec") increment(productId, -1);
     if (action === "inc") increment(productId, +1);
     if (action === "add") increment(productId, +1);
+
+    // after cart change, reflect UI immediately
+    requestAnimationFrame(() => {
+      syncVisibleQtyInputs(productsGrid);
+      const bar = document.getElementById("stickyCartBar");
+      if (bar) updateStickyBar(bar);
+    });
   });
 
   productsGrid.addEventListener("change", (e) => {
@@ -538,8 +576,14 @@ function ensureCartBindings(productsGrid) {
     const productId = card?.dataset?.productId;
     if (!productId) return;
 
-    const v = Math.max(0, Number(input.value || 0));
+    const v = Math.max(0, asNumber(input.value || 0));
     setQuantity(productId, v);
+
+    requestAnimationFrame(() => {
+      syncVisibleQtyInputs(productsGrid);
+      const bar = document.getElementById("stickyCartBar");
+      if (bar) updateStickyBar(bar);
+    });
   });
 }
 
@@ -565,6 +609,8 @@ export async function loadProducts(db) {
 }
 
 export async function renderProducts(productsGrid, items, opts = {}) {
+  _lastGridEl = productsGrid;
+
   _lastItems = Array.isArray(items) ? items : [];
   _lastRenderOpts = {
     showPrices: !!opts.showPrices,
@@ -583,7 +629,6 @@ export async function renderProducts(productsGrid, items, opts = {}) {
       : "Ești în așteptare (pending). Vezi catalog fără prețuri.";
   }
 
-  // categories
   try {
     await renderCategories(productsGrid);
   } catch (e) {
@@ -612,7 +657,14 @@ export async function renderProducts(productsGrid, items, opts = {}) {
     productsGrid.appendChild(wrap.firstElementChild);
   });
 
+  // ✅ sync quantities in cards (fix “0”)
+  syncVisibleQtyInputs(productsGrid);
+
   // sticky bar
   const bar = ensureStickyBar();
   updateStickyBar(bar);
+
+  // if summary is open, keep it fresh
+  const wrap = bar.querySelector("#cartSummaryWrap");
+  if (wrap && wrap.style.display !== "none") renderSummary(bar);
 }
