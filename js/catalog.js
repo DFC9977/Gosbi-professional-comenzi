@@ -256,16 +256,24 @@ function ensureStickyCartBar() {
   bar.style.background = "rgba(15, 15, 18, 0.92)";
   bar.style.backdropFilter = "blur(10px)";
   bar.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
-
-  // hide on wide screens (desktop) - still usable but not needed
-  const style = document.createElement("style");
-  style.textContent = `
-    @media (min-width: 900px) {
-      #stickyCartBar { display: none !important; }
+const style = document.createElement("style");
+style.textContent = `
+  @media (min-width: 900px) {
+    #stickyCartBar {
+      position: sticky !important;
+      bottom: auto !important;
+      top: 20px !important;
+      left: auto !important;
+      right: auto !important;
+      margin: 20px auto !important;
+      max-width: 600px !important;
+      width: 100% !important;
     }
-  `;
-  document.head.appendChild(style);
+    }
+`;
+document.head.appendChild(style);
 
+  
   bar.innerHTML = `
     <div style="display:flex; flex-direction:column; gap:2px; min-width: 120px;">
       <div style="font-size:12px; opacity:0.85;">Coș</div>
