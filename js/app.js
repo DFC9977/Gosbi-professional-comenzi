@@ -40,11 +40,10 @@ window.addEventListener("catalog:submitOrderRequested", async (event) => {
       items
     });
 
-    alert(`Comanda #${result.orderNumber} a fost trimisă.`);
-  } catch (err) {
-    console.error(err);
-    alert(err.message || "Eroare la trimiterea comenzii.");
-  }
+  alert(`Comanda #${result.orderNumber} a fost trimisă.`);
+
+// 👇 AICI
+clearCart();
 });
 
 import {
