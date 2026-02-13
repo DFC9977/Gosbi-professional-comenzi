@@ -28,6 +28,7 @@ let _lastItems = [];
 let _selectedCategoryId = "ALL";
 let _lastRenderOpts = { showPrices: false, db: null, priceRules: null };
 let _lastGridEl = null;
+let _cartUpdatedBound = false;
 
 /* =========================
    Helpers
@@ -218,51 +219,43 @@ function ensureCatalogCSSOnce() {
       border: 1px solid rgba(255,255,255,0.18);
       background: transparent;
       color: inherit;
-      font-size: 20px;
+      font-weight: 900;
       cursor: pointer;
-      display:flex;
-      align-items:center;
-      justify-content:center;
     }
     .qty-input {
-      width: 78px;
+      width: 70px;
       height: 40px;
       border-radius: 12px;
       border: 1px solid rgba(255,255,255,0.18);
-      background: transparent;
+      background: rgba(255,255,255,0.04);
       color: inherit;
       text-align: center;
-      padding: 0 8px;
-      font-size: 16px;
+      font-weight: 900;
+      outline: none;
     }
-
-    /* Sticky bar: mobile bottom, desktop top centered */
     #stickyCartBar {
       position: fixed;
       left: 12px;
       right: 12px;
       bottom: 12px;
-      top: auto;
-      transform: none;
       z-index: 9999;
-      border-radius: 16px;
-      padding: 12px;
-      border: 1px solid rgba(255,255,255,0.18);
-      background: rgba(15, 15, 18, 0.92);
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(10,10,12,0.88);
       backdrop-filter: blur(10px);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      border-radius: 18px;
+      padding: 12px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.35);
       display: flex;
       flex-direction: column;
       gap: 10px;
+      max-width: 980px;
+      margin: 0 auto;
     }
     @media (min-width: 900px) {
       #stickyCartBar {
-        top: 16px;
-        bottom: auto;
-        left: 50%;
-        right: auto;
-        transform: translateX(-50%);
-        width: min(760px, calc(100vw - 24px));
+        left: 24px;
+        right: 24px;
+        bottom: 18px;
       }
     }
   `;
@@ -327,6 +320,24 @@ function syncVisibleQtyInputs(productsGrid) {
     if (!input) return;
     input.value = String(map[pid] || 0);
   });
+}
+
+/* =========================
+   Real-time UI refresh for cart
+========================= */
+
+function refreshCartUI(productsGrid) {
+  syncVisibleQtyInputs(productsGrid);
+
+  const bar = document.getElementById("stickyCartBar");
+  if (bar) {
+    updateStickyBar(bar);
+
+    const wrap = bar.querySelector("#cartSummaryWrap");
+    if (wrap && wrap.style.display !== "none") {
+      renderSummary(bar);
+    }
+  }
 }
 
 /* =========================
@@ -456,6 +467,16 @@ function ensureStickyBar() {
 
   updateStickyBar(bar);
   applyBodyPaddingForBar();
+
+  // ✅ REAL-TIME: reflect ANY cart change (including clearCart after submit)
+  if (!_cartUpdatedBound) {
+    _cartUpdatedBound = true;
+    window.addEventListener("cart:updated", () => {
+      if (!_lastRenderOpts.showPrices) return;
+      refreshCartUI(_lastGridEl);
+    });
+  }
+
   return bar;
 }
 
@@ -560,11 +581,9 @@ function ensureCartBindings(productsGrid) {
     if (action === "inc") increment(productId, +1);
     if (action === "add") increment(productId, +1);
 
-    // after cart change, reflect UI immediately
+    // after cart change, reflect UI immediately (including open summary)
     requestAnimationFrame(() => {
-      syncVisibleQtyInputs(productsGrid);
-      const bar = document.getElementById("stickyCartBar");
-      if (bar) updateStickyBar(bar);
+      refreshCartUI(productsGrid);
     });
   });
 
@@ -580,9 +599,7 @@ function ensureCartBindings(productsGrid) {
     setQuantity(productId, v);
 
     requestAnimationFrame(() => {
-      syncVisibleQtyInputs(productsGrid);
-      const bar = document.getElementById("stickyCartBar");
-      if (bar) updateStickyBar(bar);
+      refreshCartUI(productsGrid);
     });
   });
 }
