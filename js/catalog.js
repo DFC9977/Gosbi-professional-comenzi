@@ -411,14 +411,26 @@ function ensureStickyCartBar() {
   });
 
   // submit
-  bar.querySelector("#btnSubmitOrder").addEventListener("click", () => {
-    const count = getItemCount();
-    if (count <= 0) {
-      alert("Coșul este gol.");
-      return;
-    }
-    window.dispatchEvent(new CustomEvent("catalog:submitOrderRequested"));
-  });
+  // submit
+bar.querySelector("#btnSubmitOrder").addEventListener("click", () => {
+  const count = getItemCount();
+
+  if (count <= 0) {
+    alert("Coșul este gol.");
+    return;
+  }
+
+  const items = buildCartSummaryLines().map(it => ({
+    productId: it.productId,
+    name: it.name,
+    qty: it.qty,
+    unitPriceFinal: it.unit,
+    lineTotal: it.lineTotal
+  }));
+
+  window.dispatchEvent(new CustomEvent("catalog:submitOrderRequested", {
+    detail: { items }
+  }));
 
   // padding only on mobile (so bottom bar doesn't cover content)
   applyBodyPaddingForCheckoutBar();
