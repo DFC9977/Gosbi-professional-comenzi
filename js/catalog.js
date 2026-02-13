@@ -1,7 +1,13 @@
 // js/catalog.js
 // Exports: loadProducts(db), renderProducts(productsGrid, items, opts)
 //
-// ✅ Includes cart integration via ./cart.js (qty +/− + persistent localStorage)
+// ✅ Mobile-first cart UX:
+// - Qty controls (+/− + input) inside product card
+// - Sticky bottom bar on mobile: total + items count + "Trimite comanda"
+// - Cart persists in localStorage via ./cart.js
+//
+// NOTE: "Trimite comanda" currently dispatches a custom event (catalog:submitOrderRequested)
+// so we can wire it in app.js / orders.js next, without coupling UI to Firestore.
 
 import {
   collection,
@@ -12,7 +18,7 @@ import {
   limit
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-import { getCart, increment, setQuantity } from "./cart.js";
+import { getCart, increment, setQuantity, getItemCount, getItemsArray } from "./cart.js";
 
 let _categoriesCache = null;
 let _lastItems = [];
@@ -110,8 +116,8 @@ function makeCatButton(label, isActive) {
   b.type = "button";
   b.textContent = label;
 
-  b.style.padding = "8px 10px";
-  b.style.borderRadius = "10px";
+  b.style.padding = "10px 12px"; // a bit larger for mobile
+  b.style.borderRadius = "12px";
   b.style.border = isActive
     ? "1px solid rgba(255,255,255,0.6)"
     : "1px solid rgba(255,255,255,0.2)";
@@ -182,9 +188,9 @@ function productCardHTML(p, showPrice, priceRules) {
          data-product-id="${id}"
          style="border:1px solid rgba(255,255,255,0.10); border-radius:16px; padding:14px; display:flex; flex-direction:column; gap:10px;">
       
-      <div style="font-weight:700; line-height:1.25;">${name}</div>
+      <div style="font-weight:700; line-height:1.25; font-size:16px;">${name}</div>
 
-      <div style="opacity:0.9;">
+      <div style="opacity:0.9; font-size:14px;">
         ${
           showPrice
             ? `Preț: <b>${formatMoney(finalPrice)} lei</b>`
@@ -197,18 +203,20 @@ function productCardHTML(p, showPrice, priceRules) {
           ? `
           <div style="display:flex; align-items:center; gap:10px; margin-top:4px;">
             <button type="button" data-action="dec"
-              style="width:42px; height:38px; border-radius:12px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:inherit; font-size:18px; cursor:pointer;">−</button>
+              aria-label="Scade cantitatea"
+              style="width:44px; height:40px; border-radius:12px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:inherit; font-size:20px; cursor:pointer;">−</button>
 
-            <input data-role="qty" type="number" min="0" value="${qty}"
-              style="width:70px; height:38px; border-radius:12px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:inherit; text-align:center; padding:0 8px;" />
+            <input data-role="qty" type="number" min="0" inputmode="numeric" value="${qty}"
+              style="width:72px; height:40px; border-radius:12px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:inherit; text-align:center; padding:0 8px; font-size:16px;" />
 
             <button type="button" data-action="inc"
-              style="width:42px; height:38px; border-radius:12px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:inherit; font-size:18px; cursor:pointer;">+</button>
+              aria-label="Crește cantitatea"
+              style="width:44px; height:40px; border-radius:12px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:inherit; font-size:20px; cursor:pointer;">+</button>
 
             <div style="flex:1;"></div>
 
             <button type="button" data-action="add"
-              style="padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.18); background:rgba(255,255,255,0.06); color:inherit; cursor:pointer;">
+              style="padding:10px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.18); background:rgba(255,255,255,0.06); color:inherit; cursor:pointer; font-weight:600;">
               Adaugă
             </button>
           </div>
@@ -224,13 +232,141 @@ function productCardHTML(p, showPrice, priceRules) {
   `;
 }
 
-/** Attach cart listeners ONCE per grid (delegation) */
+/* ==============================
+   Mobile sticky cart bar
+============================== */
+
+function ensureStickyCartBar() {
+  let bar = document.getElementById("stickyCartBar");
+  if (bar) return bar;
+
+  bar = document.createElement("div");
+  bar.id = "stickyCartBar";
+  bar.style.position = "fixed";
+  bar.style.left = "12px";
+  bar.style.right = "12px";
+  bar.style.bottom = "12px";
+  bar.style.zIndex = "9999";
+  bar.style.borderRadius = "16px";
+  bar.style.padding = "12px";
+  bar.style.display = "flex";
+  bar.style.alignItems = "center";
+  bar.style.gap = "12px";
+  bar.style.border = "1px solid rgba(255,255,255,0.18)";
+  bar.style.background = "rgba(15, 15, 18, 0.92)";
+  bar.style.backdropFilter = "blur(10px)";
+  bar.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
+
+  // hide on wide screens (desktop) - still usable but not needed
+  const style = document.createElement("style");
+  style.textContent = `
+    @media (min-width: 900px) {
+      #stickyCartBar { display: none !important; }
+    }
+  `;
+  document.head.appendChild(style);
+
+  bar.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:2px; min-width: 120px;">
+      <div style="font-size:12px; opacity:0.85;">Coș</div>
+      <div id="stickyCartMeta" style="font-size:14px; font-weight:700;">0 produse</div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:2px; flex:1;">
+      <div style="font-size:12px; opacity:0.85;">Total</div>
+      <div id="stickyCartTotal" style="font-size:16px; font-weight:800;">0 lei</div>
+    </div>
+
+    <button id="btnSubmitOrder"
+      type="button"
+      style="flex:0 0 auto; padding:12px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.22); background:rgba(255,255,255,0.10); color:inherit; font-weight:800; cursor:pointer;">
+      Trimite comanda
+    </button>
+  `;
+
+  document.body.appendChild(bar);
+
+  // Prevent content being hidden behind the bar
+  // Add safe padding at bottom for mobile
+  document.body.style.paddingBottom = "96px";
+
+  // Click: request submit (wired later in app.js / orders.js)
+  bar.querySelector("#btnSubmitOrder").addEventListener("click", () => {
+    const count = getItemCount();
+    if (count <= 0) {
+      alert("Coșul este gol.");
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("catalog:submitOrderRequested"));
+  });
+
+  return bar;
+}
+
+function buildProductsByIdWithFinalPrices() {
+  // This map will be used later for creating the order snapshot:
+  // unitPriceFinal = final computed price shown to the user
+  const map = {};
+  _lastItems.forEach((p) => {
+    const finalPrice = computeFinalPrice(p, true, _lastRenderOpts.priceRules) ?? 0;
+    map[p.id] = {
+      ...p,
+      priceFinal: finalPrice
+    };
+  });
+  return map;
+}
+
+function computeCartTotalUsingFinalPrices() {
+  const productsById = buildProductsByIdWithFinalPrices();
+  const arr = getItemsArray();
+  let total = 0;
+
+  for (const it of arr) {
+    const p = productsById[it.productId];
+    if (!p) continue;
+    total += Number(p.priceFinal || 0) * Number(it.qty || 0);
+  }
+  return Math.round(total * 100) / 100;
+}
+
+function updateStickyCartBarVisibilityAndData() {
+  const bar = ensureStickyCartBar();
+
+  // If prices are not visible, hide bar (pending users)
+  if (!_lastRenderOpts.showPrices) {
+    bar.style.display = "none";
+    return;
+  }
+
+  // Show bar on mobile
+  bar.style.display = "";
+
+  const count = getItemCount();
+  const total = computeCartTotalUsingFinalPrices();
+
+  const meta = bar.querySelector("#stickyCartMeta");
+  const tot = bar.querySelector("#stickyCartTotal");
+  const btn = bar.querySelector("#btnSubmitOrder");
+
+  meta.textContent = `${count} ${count === 1 ? "produs" : "produse"}`;
+  tot.textContent = `${formatMoney(total)} lei`;
+
+  // Disable button when empty
+  btn.disabled = count <= 0;
+  btn.style.opacity = count <= 0 ? "0.55" : "1";
+  btn.style.cursor = count <= 0 ? "not-allowed" : "pointer";
+}
+
+/* ==============================
+   Cart bindings (delegation)
+============================== */
+
 function ensureCartBindings(productsGrid) {
   if (!productsGrid) return;
   if (productsGrid.dataset.cartBound === "1") return;
   productsGrid.dataset.cartBound = "1";
 
-  // Click delegation (+/−/add)
   productsGrid.addEventListener("click", (e) => {
     const btn = e.target?.closest?.("[data-action]");
     if (!btn) return;
@@ -245,9 +381,9 @@ function ensureCartBindings(productsGrid) {
     else if (action === "add") increment(productId, +1);
 
     syncVisibleQty(productsGrid, productId);
+    updateStickyCartBarVisibilityAndData();
   });
 
-  // Qty input change delegation
   productsGrid.addEventListener("change", (e) => {
     const input = e.target?.closest?.('input[data-role="qty"]');
     if (!input) return;
@@ -260,11 +396,12 @@ function ensureCartBindings(productsGrid) {
     setQuantity(productId, v);
 
     syncVisibleQty(productsGrid, productId);
+    updateStickyCartBarVisibilityAndData();
   });
 
-  // Global sync when cart updates from elsewhere (category switching etc.)
   window.addEventListener("cart:updated", () => {
     syncAllVisibleQty(productsGrid);
+    updateStickyCartBarVisibilityAndData();
   });
 }
 
@@ -286,6 +423,10 @@ function syncAllVisibleQty(productsGrid) {
     input.value = String(getQtyFromCart(productId));
   });
 }
+
+/* ==============================
+   Public API
+============================== */
 
 export async function loadProducts(db) {
   const snap = await getDocs(
@@ -322,7 +463,7 @@ export async function renderProducts(productsGrid, items, opts = {}) {
       : "Ești în așteptare (pending). Vezi catalog fără prețuri.";
   }
 
-  // Build global products map for later order submit
+  // Keep a products map global for order submit
   window.__PRODUCTS_BY_ID__ = window.__PRODUCTS_BY_ID__ || {};
   _lastItems.forEach((p) => (window.__PRODUCTS_BY_ID__[p.id] = p));
 
@@ -330,9 +471,7 @@ export async function renderProducts(productsGrid, items, opts = {}) {
   try {
     const db = _lastRenderOpts.db || window.__db || null;
     const categories = db ? await loadCategories(db) : [];
-    const presentCategoryIds = uniq(
-      _lastItems.map((p) => String(p.categoryId || "")).filter(Boolean)
-    );
+    const presentCategoryIds = uniq(_lastItems.map((p) => String(p.categoryId || "")).filter(Boolean));
     if (categories.length) renderCategoriesUI(productsGrid, categories, presentCategoryIds);
   } catch (e) {
     console.warn("Categories load failed:", e);
@@ -360,6 +499,12 @@ export async function renderProducts(productsGrid, items, opts = {}) {
     productsGrid.appendChild(cardWrap.firstElementChild);
   });
 
-  // After render: ensure qty matches cart (especially when switching categories)
-  if (_lastRenderOpts.showPrices) syncAllVisibleQty(productsGrid);
+  if (_lastRenderOpts.showPrices) {
+    syncAllVisibleQty(productsGrid);
+    updateStickyCartBarVisibilityAndData();
+  } else {
+    // hide bar if user can't order
+    const bar = document.getElementById("stickyCartBar");
+    if (bar) bar.style.display = "none";
+  }
 }
