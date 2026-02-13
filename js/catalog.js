@@ -3,8 +3,8 @@
 //
 // ✅ Mobile-first cart UX:
 // - Qty controls (+/− + input) inside product card
-// - Mobile: fixed bottom bar (checkout)
-// - Desktop: fixed top centered bar (checkout) - bulletproof (not sticky)
+// - Checkout bar: mobile bottom fixed, desktop top fixed centered
+// - Cart summary drawer: "Produs × qty" + total
 //
 // NOTE: "Trimite comanda" dispatches: catalog:submitOrderRequested
 
@@ -189,7 +189,7 @@ function computeFinalPrice(p, showPrice, priceRules) {
 }
 
 /* =========================
-   Cart: qty + total
+   Cart helpers
 ========================= */
 
 function getQtyFromCart(productId) {
@@ -198,7 +198,7 @@ function getQtyFromCart(productId) {
 }
 
 function buildProductsByIdWithFinalPrices() {
-  // Build snapshot map: priceFinal = what user sees
+  // Map used for summary + total + (optionally) orders snapshot
   const map = {};
   _lastItems.forEach((p) => {
     const finalPrice = computeFinalPrice(p, true, _lastRenderOpts.priceRules) ?? 0;
@@ -219,6 +219,26 @@ function computeCartTotalUsingFinalPrices() {
   }
 
   return Math.round(total * 100) / 100;
+}
+
+function buildCartSummaryLines() {
+  const productsById = buildProductsByIdWithFinalPrices();
+  const items = getItemsArray()
+    .filter((x) => Number(x.qty) > 0)
+    .map((x) => ({
+      productId: x.productId,
+      qty: Number(x.qty || 0),
+      name: String(productsById[x.productId]?.name || "Produs"),
+      unit: Number(productsById[x.productId]?.priceFinal || 0),
+    }));
+
+  // sort by name for stable UI
+  items.sort((a, b) => a.name.localeCompare(b.name, "ro"));
+
+  return items.map((it) => ({
+    ...it,
+    lineTotal: Math.round(it.unit * it.qty * 100) / 100
+  }));
 }
 
 /* =========================
@@ -281,7 +301,7 @@ function productCardHTML(p, showPrice, priceRules) {
 }
 
 /* =========================
-   Checkout Bar (mobile bottom / desktop top)
+   Checkout Bar + Summary Drawer
 ========================= */
 
 function ensureCheckoutBarCSSOnce() {
@@ -290,7 +310,6 @@ function ensureCheckoutBarCSSOnce() {
   const style = document.createElement("style");
   style.id = "stickyCartBarStyle";
   style.textContent = `
-    /* mobile default: bottom fixed */
     #stickyCartBar {
       position: fixed;
       left: 12px;
@@ -301,7 +320,6 @@ function ensureCheckoutBarCSSOnce() {
       z-index: 9999;
     }
 
-    /* desktop: top fixed centered */
     @media (min-width: 900px) {
       #stickyCartBar {
         top: 16px;
@@ -309,8 +327,13 @@ function ensureCheckoutBarCSSOnce() {
         left: 50%;
         right: auto;
         transform: translateX(-50%);
-        width: min(600px, calc(100vw - 24px));
+        width: min(700px, calc(100vw - 24px));
       }
+    }
+
+    #cartSummaryDrawer {
+      max-height: 52vh;
+      overflow: auto;
     }
   `;
   document.head.appendChild(style);
@@ -329,34 +352,65 @@ function ensureStickyCartBar() {
   bar.style.borderRadius = "16px";
   bar.style.padding = "12px";
   bar.style.display = "flex";
-  bar.style.alignItems = "center";
-  bar.style.gap = "12px";
+  bar.style.flexDirection = "column";
+  bar.style.gap = "10px";
   bar.style.border = "1px solid rgba(255,255,255,0.18)";
   bar.style.background = "rgba(15, 15, 18, 0.92)";
   bar.style.backdropFilter = "blur(10px)";
   bar.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
 
   bar.innerHTML = `
-    <div style="display:flex; flex-direction:column; gap:2px; min-width: 120px;">
-      <div style="font-size:12px; opacity:0.85;">Coș</div>
-      <div id="stickyCartMeta" style="font-size:14px; font-weight:700;">0 produse</div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <button id="btnToggleSummary" type="button"
+        style="flex:1; text-align:left; background:transparent; border:none; color:inherit; padding:0; cursor:pointer;">
+        <div style="font-size:12px; opacity:0.85;">Coș</div>
+        <div id="stickyCartMeta" style="font-size:14px; font-weight:800;">0 produse</div>
+        <div id="stickyCartTotal" style="font-size:13px; opacity:0.9; margin-top:2px;">0 lei</div>
+      </button>
+
+      <button id="btnSubmitOrder"
+        type="button"
+        style="flex:0 0 auto; padding:12px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.22); background:rgba(255,255,255,0.10); color:inherit; font-weight:900; cursor:pointer;">
+        Trimite comanda
+      </button>
     </div>
 
-    <div style="display:flex; flex-direction:column; gap:2px; flex:1;">
-      <div style="font-size:12px; opacity:0.85;">Total</div>
-      <div id="stickyCartTotal" style="font-size:16px; font-weight:800;">0 lei</div>
-    </div>
+    <div id="cartSummaryWrap" style="display:none; border-top:1px solid rgba(255,255,255,0.10); padding-top:10px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
+        <div style="font-weight:800;">Sumar</div>
+        <button id="btnCloseSummary" type="button"
+          style="background:transparent; border:1px solid rgba(255,255,255,0.18); color:inherit; border-radius:12px; padding:6px 10px; cursor:pointer;">
+          Închide
+        </button>
+      </div>
 
-    <button id="btnSubmitOrder"
-      type="button"
-      style="flex:0 0 auto; padding:12px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.22); background:rgba(255,255,255,0.10); color:inherit; font-weight:800; cursor:pointer;">
-      Trimite comanda
-    </button>
+      <div id="cartSummaryDrawer"
+        style="display:flex; flex-direction:column; gap:8px;">
+      </div>
+
+      <div style="border-top:1px dashed rgba(255,255,255,0.18); margin-top:10px; padding-top:10px; display:flex; align-items:center; justify-content:space-between;">
+        <div style="opacity:0.9;">Total</div>
+        <div id="cartSummaryTotal" style="font-weight:900;">0 lei</div>
+      </div>
+    </div>
   `;
 
   document.body.appendChild(bar);
 
-  // click => submit
+  // toggle summary
+  const toggle = () => {
+    const wrap = bar.querySelector("#cartSummaryWrap");
+    const isOpen = wrap.style.display !== "none";
+    wrap.style.display = isOpen ? "none" : "block";
+    if (!isOpen) renderCartSummaryIntoBar(bar);
+  };
+
+  bar.querySelector("#btnToggleSummary").addEventListener("click", toggle);
+  bar.querySelector("#btnCloseSummary").addEventListener("click", () => {
+    bar.querySelector("#cartSummaryWrap").style.display = "none";
+  });
+
+  // submit
   bar.querySelector("#btnSubmitOrder").addEventListener("click", () => {
     const count = getItemCount();
     if (count <= 0) {
@@ -366,10 +420,9 @@ function ensureStickyCartBar() {
     window.dispatchEvent(new CustomEvent("catalog:submitOrderRequested"));
   });
 
-  // adjust body padding (mobile needs space for bottom bar; desktop doesn't)
+  // padding only on mobile (so bottom bar doesn't cover content)
   applyBodyPaddingForCheckoutBar();
 
-  // update padding on resize (once)
   if (!window.__checkoutBarResizeBound) {
     window.__checkoutBarResizeBound = true;
     window.addEventListener("resize", applyBodyPaddingForCheckoutBar);
@@ -380,13 +433,60 @@ function ensureStickyCartBar() {
 
 function applyBodyPaddingForCheckoutBar() {
   const isMobile = window.matchMedia("(max-width: 899px)").matches;
-  document.body.style.paddingBottom = isMobile ? "96px" : "";
+  document.body.style.paddingBottom = isMobile ? "140px" : ""; // extra space (bar + summary)
+}
+
+function renderCartSummaryIntoBar(bar) {
+  const lines = buildCartSummaryLines();
+  const drawer = bar.querySelector("#cartSummaryDrawer");
+  const totalEl = bar.querySelector("#cartSummaryTotal");
+
+  drawer.innerHTML = "";
+
+  if (!lines.length) {
+    const empty = document.createElement("div");
+    empty.style.opacity = "0.8";
+    empty.textContent = "Coșul este gol.";
+    drawer.appendChild(empty);
+    totalEl.textContent = "0 lei";
+    return;
+  }
+
+  lines.forEach((it) => {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.justifyContent = "space-between";
+    row.style.gap = "10px";
+
+    const left = document.createElement("div");
+    left.style.flex = "1";
+    left.style.minWidth = "0";
+    left.style.fontSize = "14px";
+    left.style.fontWeight = "700";
+    left.style.whiteSpace = "nowrap";
+    left.style.overflow = "hidden";
+    left.style.textOverflow = "ellipsis";
+    left.textContent = `${it.name} × ${it.qty}`;
+
+    const right = document.createElement("div");
+    right.style.fontSize = "13px";
+    right.style.opacity = "0.9";
+    right.style.fontWeight = "700";
+    right.textContent = `${formatMoney(it.lineTotal)} lei`;
+
+    row.appendChild(left);
+    row.appendChild(right);
+    drawer.appendChild(row);
+  });
+
+  const total = computeCartTotalUsingFinalPrices();
+  totalEl.textContent = `${formatMoney(total)} lei`;
 }
 
 function updateStickyCartBarVisibilityAndData() {
   const bar = ensureStickyCartBar();
 
-  // If prices are not visible, hide bar (pending users)
   if (!_lastRenderOpts.showPrices) {
     bar.style.display = "none";
     return;
@@ -407,6 +507,12 @@ function updateStickyCartBarVisibilityAndData() {
   btn.disabled = count <= 0;
   btn.style.opacity = count <= 0 ? "0.55" : "1";
   btn.style.cursor = count <= 0 ? "not-allowed" : "pointer";
+
+  // if summary is open, refresh it live
+  const summaryWrap = bar.querySelector("#cartSummaryWrap");
+  if (summaryWrap && summaryWrap.style.display !== "none") {
+    renderCartSummaryIntoBar(bar);
+  }
 }
 
 /* =========================
