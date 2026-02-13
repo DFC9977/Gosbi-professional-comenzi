@@ -2,7 +2,6 @@
 
 import { auth, db } from "./firebase.js";
 import { submitOrder } from "./orders.js";
-import { clearCart } from "./cart.js";
 
 import {
   createUserWithEmailAndPassword,
@@ -17,21 +16,7 @@ import {
   setDoc,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-
-import {
-  fillCountyOptions,
-  fillCityDatalist,
-  getUserProfile,
-  isContactComplete,
-  saveContact,
-} from "./profile.js";
-
-import { loadProducts, renderProducts } from "./catalog.js";
-
-
-/* =======================
-   SUBMIT ORDER LISTENER
-======================= */
+;
 window.addEventListener("catalog:submitOrderRequested", async (event) => {
   try {
     const user = auth.currentUser;
@@ -40,7 +25,8 @@ window.addEventListener("catalog:submitOrderRequested", async (event) => {
       return;
     }
 
-    const items = event?.detail?.items || [];
+    const items = event.detail?.items || [];
+
     if (!items.length) {
       alert("Coș gol.");
       return;
@@ -53,19 +39,21 @@ window.addEventListener("catalog:submitOrderRequested", async (event) => {
     });
 
     alert(`Comanda #${result.orderNumber} a fost trimisă.`);
-
-    // 🔥 GOLIRE COȘ
-    clearCart();
-
-    // 🔄 Refresh catalog pentru resetare UI
-    await refreshCatalog();
-
   } catch (err) {
     console.error(err);
-    alert(err?.message || "Eroare la trimiterea comenzii.");
+    alert(err.message || "Eroare la trimiterea comenzii.");
   }
 });
 
+import {
+  fillCountyOptions,
+  fillCityDatalist,
+  getUserProfile,
+  isContactComplete,
+  saveContact,
+} from "./profile.js";
+
+import { loadProducts, renderProducts } from "./catalog.js";
 
 /* -------------------- DOM -------------------- */
 const screenLoading = document.getElementById("screenLoading");
@@ -99,7 +87,6 @@ const btnRefreshProducts = document.getElementById("btnRefreshProducts");
 
 const btnBackToCatalog = document.getElementById("btnBackToCatalog");
 const adminFrame = document.getElementById("adminFrame");
-
 
 /* -------------------- Helpers -------------------- */
 function showOnly(el) {
@@ -172,6 +159,92 @@ function setCatalogHint(profile) {
       : "Ești în așteptare (pending). Vezi catalog fără prețuri.";
 }
 
+/* -------------------- UI: Contact -------------------- */
+function initCountyCity() {
+  fillCountyOptions(countySelect);
+
+  countySelect?.addEventListener("change", () => {
+    const county = countySelect.value;
+    fillCityDatalist(cityList, county);
+    cityInput.value = "";
+    cityInput.disabled = !county;
+  });
+}
+
+/* -------------------- Auth Buttons -------------------- */
+btnLogin?.addEventListener("click", async () => {
+  clearNote(loginMsg);
+
+  const phone = normalizePhone(loginPhone.value);
+  const pass = String(loginPass.value || "");
+
+  if (!phone) return showNote(loginMsg, "Completează telefonul.", "err");
+  if (pass.length < 4) return showNote(loginMsg, "Parola e prea scurtă.", "err");
+
+  try {
+    btnLogin.disabled = true;
+    await signInWithEmailAndPassword(auth, phoneToEmail(phone), pass);
+  } catch (e) {
+    showNote(loginMsg, e?.message || "Eroare la login.", "err");
+  } finally {
+    btnLogin.disabled = false;
+  }
+});
+
+btnRegister?.addEventListener("click", async () => {
+  clearNote(loginMsg);
+
+  const phone = normalizePhone(loginPhone.value);
+  const pass = String(loginPass.value || "");
+
+  if (!phone) return showNote(loginMsg, "Completează telefonul.", "err");
+  if (pass.length < 6) return showNote(loginMsg, "Parola trebuie minim 6 caractere.", "err");
+
+  try {
+    btnRegister.disabled = true;
+    await createUserWithEmailAndPassword(auth, phoneToEmail(phone), pass);
+    showNote(loginMsg, "Cont creat. Te autentific…", "ok");
+  } catch (e) {
+    showNote(loginMsg, e?.message || "Eroare la creare cont.", "err");
+  } finally {
+    btnRegister.disabled = false;
+  }
+});
+
+btnLogout?.addEventListener("click", async () => {
+  try { await signOut(auth); } catch (e) {}
+});
+
+btnBackToLogin?.addEventListener("click", async () => {
+  clearNote(contactMsg);
+  try { await signOut(auth); } catch (e) {}
+});
+
+/* -------------------- Contact Save -------------------- */
+btnSaveContact?.addEventListener("click", async () => {
+  clearNote(contactMsg);
+
+  const user = auth.currentUser;
+  if (!user) return showNote(contactMsg, "Sesiune invalidă. Reautentifică-te.", "err");
+
+  try {
+    btnSaveContact.disabled = true;
+
+    await saveContact(user.uid, {
+      fullName: fullName.value,
+      address: address.value,
+      county: countySelect.value,
+      city: cityInput.value,
+    });
+
+    showNote(contactMsg, "Date salvate. Se deschide catalogul…", "ok");
+    await routeAfterAuth(user);
+  } catch (e) {
+    showNote(contactMsg, e?.message || "Eroare la salvare.", "err");
+  } finally {
+    btnSaveContact.disabled = false;
+  }
+});
 
 /* -------------------- Catalog -------------------- */
 btnRefreshProducts?.addEventListener("click", async () => {
@@ -210,4 +283,86 @@ async function refreshCatalog() {
     db,
     priceRules: profile?.priceRules || null,
   });
+}
+
+/* -------------------- Admin screen in-app -------------------- */
+btnAdmin?.addEventListener("click", () => {
+  showOnly(screenAdmin);
+  if (adminFrame) adminFrame.src = "./admin.html?v=" + Date.now();
+});
+
+btnBackToCatalog?.addEventListener("click", () => {
+  showOnly(screenCatalog);
+});
+
+/* -------------------- Routing -------------------- */
+async function routeAfterAuth(user) {
+  setSessionText(user);
+
+  const base = await ensureUserDoc(user);
+  const profile = (await getUserProfile(user.uid)) || base;
+
+  if (btnAdmin) btnAdmin.style.display = (profile?.role === "admin") ? "inline-block" : "none";
+
+  if (!isContactComplete(profile)) {
+    fullName.value = profile?.contact?.fullName || "";
+    address.value = profile?.contact?.address || "";
+
+    const county = profile?.contact?.county || "";
+    countySelect.value = county;
+
+    fillCityDatalist(cityList, county);
+    cityInput.disabled = !county;
+
+    cityInput.value = profile?.contact?.city || "";
+
+    clearNote(contactMsg);
+    showOnly(screenContactGate);
+    return;
+  }
+
+  setCatalogHint(profile);
+  showOnly(screenCatalog);
+
+  try {
+    await refreshCatalog();
+  } catch (e) {
+    productsGrid.innerHTML = `<div class="note">Eroare la încărcarea produselor: ${escapeHtml(e?.message || "unknown")}</div>`;
+  }
+}
+
+/* -------------------- Boot -------------------- */
+initCountyCity();
+showOnly(screenLoading);
+setSessionText(null);
+
+onAuthStateChanged(auth, async (user) => {
+  clearNote(loginMsg);
+  clearNote(contactMsg);
+
+  if (!user) {
+    setSessionText(null);
+    showOnly(screenLogin);
+    return;
+  }
+
+  showOnly(screenLoading);
+
+  try {
+    await routeAfterAuth(user);
+  } catch (e) {
+    setSessionText(user);
+    showOnly(screenLogin);
+    showNote(loginMsg, `Eroare: ${e?.message || "unknown"}`, "err");
+  }
+});
+
+/* -------------------- util -------------------- */
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
