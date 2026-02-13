@@ -5,7 +5,8 @@ import {
   doc,
   collection,
   runTransaction,
-  serverTimestamp
+  serverTimestamp,
+  Timestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 import { db } from "./firebase.js";
@@ -71,9 +72,6 @@ export async function submitOrder({ clientId, clientName }) {
     throw err;
   }
 
-  // IMPORTANT:
-  // catalog.js will maintain window.__PRODUCTS_FINAL_BY_ID__ = { [id]: {name, priceFinal, ...} }
-  // so we can snapshot exactly what user saw.
   const productsFinalById =
     window.__PRODUCTS_FINAL_BY_ID__ ||
     window.__PRODUCTS_BY_ID__ ||
@@ -84,12 +82,14 @@ export async function submitOrder({ clientId, clientName }) {
   const counterRef = doc(db, "counters", "orders");
   const orderRef = doc(collection(db, "orders"));
 
+  const now = Timestamp.now(); // ✅ safe inside arrays/objects
+
   const { orderNumber } = await runTransaction(db, async (tx) => {
     const snap = await tx.get(counterRef);
 
     let next = 1000;
+
     if (!snap.exists()) {
-      // initialize
       tx.set(counterRef, { current: 1000 });
       next = 1000;
     } else {
@@ -110,13 +110,13 @@ export async function submitOrder({ clientId, clientName }) {
       statusHistory: [
         {
           status: "NEW",
-          at: serverTimestamp(),
+          at: now,        // ✅ Timestamp value, not serverTimestamp()
           adminUid: null
         }
       ],
 
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
+      createdAt: serverTimestamp(), // ✅ ok at root
+      updatedAt: serverTimestamp()  // ✅ ok at root
     };
 
     tx.set(orderRef, payload);
@@ -124,7 +124,6 @@ export async function submitOrder({ clientId, clientName }) {
     return { orderNumber: next };
   });
 
-  // only clear cart after the transaction succeeded
   clearCart();
 
   return {
