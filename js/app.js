@@ -2,7 +2,7 @@
 
 import { auth, db } from "./firebase.js";
 import { submitOrder } from "./orders.js";
-import { clearCart } from "./cart.js";
+import { clearCart, getItemCount } from "./cart.js";
 
 import {
   createUserWithEmailAndPassword,
@@ -68,6 +68,7 @@ const screenAdmin = document.getElementById("screenAdmin");
 const sessionInfo = document.getElementById("sessionInfo");
 const btnLogout = document.getElementById("btnLogout");
 const btnAdmin = document.getElementById("btnAdmin");
+const btnOrdersAdmin = document.getElementById("btnOrdersAdmin");
 
 const loginPhone = document.getElementById("loginPhone");
 const loginPass = document.getElementById("loginPass");
@@ -146,6 +147,7 @@ function setSessionText(user) {
     sessionInfo.textContent = "Neautentificat";
     btnLogout.hidden = true;
     if (btnAdmin) btnAdmin.style.display = "none";
+    if (btnOrdersAdmin) btnOrdersAdmin.style.display = "none";
     return;
   }
   const phone = (user.email || "").replace("@phone.local", "");
@@ -161,6 +163,21 @@ function setCatalogHint(profile) {
       ? "Cont activ. Prețurile sunt vizibile."
       : "Ești în așteptare (pending). Vezi catalog fără prețuri.";
 }
+
+/* -------------------- Cart UI (real-time) -------------------- */
+function updateCartUI() {
+  const count = getItemCount();
+
+  const cartCountEl = document.getElementById("cartCount");
+  if (cartCountEl) cartCountEl.textContent = String(count);
+
+  const btnCart = document.getElementById("btnCart");
+  if (btnCart) btnCart.textContent = count > 0 ? `Coș (${count})` : "Coș";
+}
+
+window.addEventListener("cart:updated", () => {
+  updateCartUI();
+});
 
 /* -------------------- UI: Contact -------------------- */
 function initCountyCity() {
@@ -286,12 +303,19 @@ async function refreshCatalog() {
     db,
     priceRules: profile?.priceRules || null,
   });
+
+  updateCartUI();
 }
 
 /* -------------------- Admin screen in-app -------------------- */
 btnAdmin?.addEventListener("click", () => {
   showOnly(screenAdmin);
   if (adminFrame) adminFrame.src = "./admin.html?v=" + Date.now();
+});
+
+btnOrdersAdmin?.addEventListener("click", () => {
+  showOnly(screenAdmin);
+  if (adminFrame) adminFrame.src = "./orders-admin.html?v=" + Date.now();
 });
 
 btnBackToCatalog?.addEventListener("click", () => {
@@ -305,7 +329,9 @@ async function routeAfterAuth(user) {
   const base = await ensureUserDoc(user);
   const profile = (await getUserProfile(user.uid)) || base;
 
-  if (btnAdmin) btnAdmin.style.display = (profile?.role === "admin") ? "inline-block" : "none";
+  const isAdmin = profile?.role === "admin";
+  if (btnAdmin) btnAdmin.style.display = isAdmin ? "inline-block" : "none";
+  if (btnOrdersAdmin) btnOrdersAdmin.style.display = isAdmin ? "inline-block" : "none";
 
   if (!isContactComplete(profile)) {
     fullName.value = profile?.contact?.fullName || "";
@@ -339,6 +365,8 @@ initCountyCity();
 showOnly(screenLoading);
 setSessionText(null);
 
+updateCartUI();
+
 onAuthStateChanged(auth, async (user) => {
   clearNote(loginMsg);
   clearNote(contactMsg);
@@ -346,6 +374,7 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) {
     setSessionText(null);
     showOnly(screenLogin);
+    updateCartUI();
     return;
   }
 
@@ -357,6 +386,8 @@ onAuthStateChanged(auth, async (user) => {
     setSessionText(user);
     showOnly(screenLogin);
     showNote(loginMsg, `Eroare: ${e?.message || "unknown"}`, "err");
+  } finally {
+    updateCartUI();
   }
 });
 
