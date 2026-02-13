@@ -2,6 +2,8 @@
 
 import { auth, db } from "./firebase.js";
 import { submitOrder } from "./orders.js";
+import { clearCart } from "./cart.js";
+
 
 import {
   createUserWithEmailAndPassword,
