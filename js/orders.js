@@ -1,70 +1,46 @@
 // js/orders.js
-// Handles order creation (no confirmation step)
+// Create order with atomic counter + snapshot of items (priceFinal, qty, subtotals)
 
 import {
   doc,
   collection,
   runTransaction,
-  serverTimestamp,
-  setDoc
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 import { db } from "./firebase.js";
 import { getItemsArray, clearCart } from "./cart.js";
 
-/* ==============================
-   Counter (atomic)
-============================== */
-
-async function getNextOrderNumber() {
-  const counterRef = doc(db, "counters", "orders");
-
-  const nextNumber = await runTransaction(db, async (transaction) => {
-    const snap = await transaction.get(counterRef);
-
-    if (!snap.exists()) {
-      transaction.set(counterRef, { current: 1000 });
-      return 1000;
-    }
-
-    const current = Number(snap.data().current || 1000);
-    const next = current + 1;
-
-    transaction.update(counterRef, { current: next });
-
-    return next;
-  });
-
-  return nextNumber;
+function asNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
-/* ==============================
-   Build Order Snapshot
-============================== */
-
-function buildOrderItems(productsById) {
-  const cartItems = getItemsArray();
+function buildSnapshotItems(productsFinalById) {
+  const cartItems = getItemsArray().filter((x) => asNumber(x.qty) > 0);
 
   if (!cartItems.length) {
-    throw new Error("Cart is empty");
+    const err = new Error("Cart is empty");
+    err.code = "CART_EMPTY";
+    throw err;
   }
 
   const items = [];
   let total = 0;
 
   for (const ci of cartItems) {
-    const product = productsById?.[ci.productId];
-    if (!product) continue;
+    const p = productsFinalById?.[ci.productId];
+    if (!p) continue;
 
-    const unitPriceFinal = Number(product.priceFinal ?? product.price ?? 0);
-    const qty = Number(ci.qty || 0);
+    const qty = asNumber(ci.qty);
+    const unitPriceFinal = asNumber(p.priceFinal ?? p.priceBase ?? p.priceGross ?? p.price ?? 0);
     const lineTotal = Math.round(unitPriceFinal * qty * 100) / 100;
 
     total += lineTotal;
 
     items.push({
-      productId: ci.productId,
-      name: product.name || "",
+      productId: String(ci.productId),
+      name: String(p.name || ""),
       qty,
       unitPriceFinal,
       lineTotal
@@ -73,49 +49,82 @@ function buildOrderItems(productsById) {
 
   total = Math.round(total * 100) / 100;
 
+  if (!items.length) {
+    const err = new Error("No valid items in cart");
+    err.code = "NO_VALID_ITEMS";
+    throw err;
+  }
+
   return { items, total };
 }
 
-/* ==============================
-   Public: submitOrder
-============================== */
-
+/**
+ * submitOrder
+ * - increments counters/orders.current atomically
+ * - creates order document in same transaction (no gaps)
+ * - clears cart on success
+ */
 export async function submitOrder({ clientId, clientName }) {
-  if (!clientId) throw new Error("Missing clientId");
-
-  // Use final prices already computed in catalog
-  const productsById = window.__PRODUCTS_BY_ID__ || {};
-
-  const { items, total } = buildOrderItems(productsById);
-
-  if (!items.length) {
-    throw new Error("No valid items in cart");
+  if (!clientId) {
+    const err = new Error("Missing clientId");
+    err.code = "MISSING_CLIENT";
+    throw err;
   }
 
-  const orderNumber = await getNextOrderNumber();
+  // IMPORTANT:
+  // catalog.js will maintain window.__PRODUCTS_FINAL_BY_ID__ = { [id]: {name, priceFinal, ...} }
+  // so we can snapshot exactly what user saw.
+  const productsFinalById =
+    window.__PRODUCTS_FINAL_BY_ID__ ||
+    window.__PRODUCTS_BY_ID__ ||
+    {};
 
+  const { items, total } = buildSnapshotItems(productsFinalById);
+
+  const counterRef = doc(db, "counters", "orders");
   const orderRef = doc(collection(db, "orders"));
 
-  const orderPayload = {
-    orderNumber,
-    clientId,
-    clientName: clientName || "",
-    items,
-    total,
-    status: "NEW",
-    statusHistory: [
-      {
-        status: "NEW",
-        at: new Date().toISOString(),
-        adminUid: null
-      }
-    ],
-    createdAt: serverTimestamp()
-  };
+  const { orderNumber } = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(counterRef);
 
-  await setDoc(orderRef, orderPayload);
+    let next = 1000;
+    if (!snap.exists()) {
+      // initialize
+      tx.set(counterRef, { current: 1000 });
+      next = 1000;
+    } else {
+      const current = asNumber(snap.data()?.current ?? 1000);
+      next = current + 1;
+      tx.update(counterRef, { current: next });
+    }
 
-  // Reset cart immediately (no confirmation)
+    const payload = {
+      orderNumber: next,
+      clientId,
+      clientName: clientName || "",
+
+      items,
+      total,
+
+      status: "NEW",
+      statusHistory: [
+        {
+          status: "NEW",
+          at: serverTimestamp(),
+          adminUid: null
+        }
+      ],
+
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    tx.set(orderRef, payload);
+
+    return { orderNumber: next };
+  });
+
+  // only clear cart after the transaction succeeded
   clearCart();
 
   return {
