@@ -2,6 +2,7 @@
 
 import { auth, db } from "./firebase.js";
 import { submitOrder } from "./orders.js";
+import { clearCart } from "./cart.js";
 
 import {
   createUserWithEmailAndPassword,
@@ -37,6 +38,8 @@ window.addEventListener("catalog:submitOrderRequested", async (event) => {
       clientName: user.email || "",
       items
     });
+
+    await clearCart();
 
     alert(`Comanda #${result.orderNumber} a fost trimisă.`);
   } catch (err) {
