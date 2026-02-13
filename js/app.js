@@ -1,5 +1,7 @@
 // js/app.js
+
 import { auth, db } from "./firebase.js";
+import { submitOrder } from "./orders.js";
 
 import {
   createUserWithEmailAndPassword,
@@ -12,8 +14,29 @@ import {
   doc,
   getDoc,
   setDoc,
-  serverTimestamp,
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+;
+window.addEventListener("catalog:submitOrderRequested", async () => {
+  try {
+    const user = auth.currentUser;
+
+    if (!user) {
+      alert("Trebuie să fii logat.");
+      return;
+    }
+
+    const result = await submitOrder({
+      clientId: user.uid,
+      clientName: user.email || ""
+    });
+
+    alert(`Comanda #${result.orderNumber} a fost trimisă.`);
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Eroare la trimiterea comenzii.");
+  }
+});
 
 import {
   fillCountyOptions,
