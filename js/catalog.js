@@ -3,11 +3,10 @@
 //
 // ✅ Mobile-first cart UX:
 // - Qty controls (+/− + input) inside product card
-// - Sticky bottom bar on mobile: total + items count + "Trimite comanda"
-// - Cart persists in localStorage via ./cart.js
+// - Mobile: fixed bottom bar (checkout)
+// - Desktop: fixed top centered bar (checkout) - bulletproof (not sticky)
 //
-// NOTE: "Trimite comanda" currently dispatches a custom event (catalog:submitOrderRequested)
-// so we can wire it in app.js / orders.js next, without coupling UI to Firestore.
+// NOTE: "Trimite comanda" dispatches: catalog:submitOrderRequested
 
 import {
   collection,
@@ -18,12 +17,22 @@ import {
   limit
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-import { getCart, increment, setQuantity, getItemCount, getItemsArray } from "./cart.js";
+import {
+  getCart,
+  increment,
+  setQuantity,
+  getItemCount,
+  getItemsArray
+} from "./cart.js";
 
 let _categoriesCache = null;
 let _lastItems = [];
 let _selectedCategoryId = "ALL";
 let _lastRenderOpts = { showPrices: false, db: null, priceRules: null };
+
+/* =========================
+   Helpers
+========================= */
 
 function asNumber(v) {
   const n = Number(v);
@@ -53,6 +62,10 @@ function ensureGridLayout(productsGrid) {
   productsGrid.style.width = "100%";
   productsGrid.style.boxSizing = "border-box";
 }
+
+/* =========================
+   Categories
+========================= */
 
 async function loadCategories(db) {
   if (_categoriesCache) return _categoriesCache;
@@ -116,7 +129,7 @@ function makeCatButton(label, isActive) {
   b.type = "button";
   b.textContent = label;
 
-  b.style.padding = "10px 12px"; // a bit larger for mobile
+  b.style.padding = "10px 12px";
   b.style.borderRadius = "12px";
   b.style.border = isActive
     ? "1px solid rgba(255,255,255,0.6)"
@@ -153,7 +166,10 @@ function renderCategoriesUI(productsGrid, categories, allowedCategoryIds) {
   });
 }
 
-// ✅ calculează adaos: override pe categorie sau global
+/* =========================
+   Pricing (kept for compatibility)
+========================= */
+
 function getMarkupForProduct(p, priceRules) {
   const catId = String(p?.categoryId || "");
   const byCat = priceRules?.categories?.[catId];
@@ -172,10 +188,42 @@ function computeFinalPrice(p, showPrice, priceRules) {
   return Math.round(base * (1 + markup / 100) * 100) / 100;
 }
 
+/* =========================
+   Cart: qty + total
+========================= */
+
 function getQtyFromCart(productId) {
   const cart = getCart();
   return Number(cart.items?.[productId] || 0);
 }
+
+function buildProductsByIdWithFinalPrices() {
+  // Build snapshot map: priceFinal = what user sees
+  const map = {};
+  _lastItems.forEach((p) => {
+    const finalPrice = computeFinalPrice(p, true, _lastRenderOpts.priceRules) ?? 0;
+    map[p.id] = { ...p, priceFinal: finalPrice };
+  });
+  return map;
+}
+
+function computeCartTotalUsingFinalPrices() {
+  const productsById = buildProductsByIdWithFinalPrices();
+  const arr = getItemsArray();
+  let total = 0;
+
+  for (const it of arr) {
+    const p = productsById[it.productId];
+    if (!p) continue;
+    total += Number(p.priceFinal || 0) * Number(it.qty || 0);
+  }
+
+  return Math.round(total * 100) / 100;
+}
+
+/* =========================
+   Product Card
+========================= */
 
 function productCardHTML(p, showPrice, priceRules) {
   const id = String(p.id || "");
@@ -232,21 +280,52 @@ function productCardHTML(p, showPrice, priceRules) {
   `;
 }
 
-/* ==============================
-   Mobile sticky cart bar
-============================== */
+/* =========================
+   Checkout Bar (mobile bottom / desktop top)
+========================= */
+
+function ensureCheckoutBarCSSOnce() {
+  if (document.getElementById("stickyCartBarStyle")) return;
+
+  const style = document.createElement("style");
+  style.id = "stickyCartBarStyle";
+  style.textContent = `
+    /* mobile default: bottom fixed */
+    #stickyCartBar {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      top: auto;
+      transform: none;
+      z-index: 9999;
+    }
+
+    /* desktop: top fixed centered */
+    @media (min-width: 900px) {
+      #stickyCartBar {
+        top: 16px;
+        bottom: auto;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        width: min(600px, calc(100vw - 24px));
+      }
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 function ensureStickyCartBar() {
   let bar = document.getElementById("stickyCartBar");
   if (bar) return bar;
 
+  ensureCheckoutBarCSSOnce();
+
   bar = document.createElement("div");
   bar.id = "stickyCartBar";
-  bar.style.position = "fixed";
-  bar.style.left = "12px";
-  bar.style.right = "12px";
-  bar.style.bottom = "12px";
-  bar.style.zIndex = "9999";
+
+  // visual style
   bar.style.borderRadius = "16px";
   bar.style.padding = "12px";
   bar.style.display = "flex";
@@ -256,24 +335,7 @@ function ensureStickyCartBar() {
   bar.style.background = "rgba(15, 15, 18, 0.92)";
   bar.style.backdropFilter = "blur(10px)";
   bar.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
-const style = document.createElement("style");
-style.textContent = `
-  @media (min-width: 900px) {
-    #stickyCartBar {
-      position: sticky !important;
-      bottom: auto !important;
-      top: 20px !important;
-      left: auto !important;
-      right: auto !important;
-      margin: 20px auto !important;
-      max-width: 600px !important;
-      width: 100% !important;
-    }
-    }
-`;
-document.head.appendChild(style);
 
-  
   bar.innerHTML = `
     <div style="display:flex; flex-direction:column; gap:2px; min-width: 120px;">
       <div style="font-size:12px; opacity:0.85;">Coș</div>
@@ -294,11 +356,7 @@ document.head.appendChild(style);
 
   document.body.appendChild(bar);
 
-  // Prevent content being hidden behind the bar
-  // Add safe padding at bottom for mobile
-  document.body.style.paddingBottom = "96px";
-
-  // Click: request submit (wired later in app.js / orders.js)
+  // click => submit
   bar.querySelector("#btnSubmitOrder").addEventListener("click", () => {
     const count = getItemCount();
     if (count <= 0) {
@@ -308,34 +366,21 @@ document.head.appendChild(style);
     window.dispatchEvent(new CustomEvent("catalog:submitOrderRequested"));
   });
 
+  // adjust body padding (mobile needs space for bottom bar; desktop doesn't)
+  applyBodyPaddingForCheckoutBar();
+
+  // update padding on resize (once)
+  if (!window.__checkoutBarResizeBound) {
+    window.__checkoutBarResizeBound = true;
+    window.addEventListener("resize", applyBodyPaddingForCheckoutBar);
+  }
+
   return bar;
 }
 
-function buildProductsByIdWithFinalPrices() {
-  // This map will be used later for creating the order snapshot:
-  // unitPriceFinal = final computed price shown to the user
-  const map = {};
-  _lastItems.forEach((p) => {
-    const finalPrice = computeFinalPrice(p, true, _lastRenderOpts.priceRules) ?? 0;
-    map[p.id] = {
-      ...p,
-      priceFinal: finalPrice
-    };
-  });
-  return map;
-}
-
-function computeCartTotalUsingFinalPrices() {
-  const productsById = buildProductsByIdWithFinalPrices();
-  const arr = getItemsArray();
-  let total = 0;
-
-  for (const it of arr) {
-    const p = productsById[it.productId];
-    if (!p) continue;
-    total += Number(p.priceFinal || 0) * Number(it.qty || 0);
-  }
-  return Math.round(total * 100) / 100;
+function applyBodyPaddingForCheckoutBar() {
+  const isMobile = window.matchMedia("(max-width: 899px)").matches;
+  document.body.style.paddingBottom = isMobile ? "96px" : "";
 }
 
 function updateStickyCartBarVisibilityAndData() {
@@ -347,8 +392,7 @@ function updateStickyCartBarVisibilityAndData() {
     return;
   }
 
-  // Show bar on mobile
-  bar.style.display = "";
+  bar.style.display = "flex";
 
   const count = getItemCount();
   const total = computeCartTotalUsingFinalPrices();
@@ -360,15 +404,14 @@ function updateStickyCartBarVisibilityAndData() {
   meta.textContent = `${count} ${count === 1 ? "produs" : "produse"}`;
   tot.textContent = `${formatMoney(total)} lei`;
 
-  // Disable button when empty
   btn.disabled = count <= 0;
   btn.style.opacity = count <= 0 ? "0.55" : "1";
   btn.style.cursor = count <= 0 ? "not-allowed" : "pointer";
 }
 
-/* ==============================
+/* =========================
    Cart bindings (delegation)
-============================== */
+========================= */
 
 function ensureCartBindings(productsGrid) {
   if (!productsGrid) return;
@@ -414,15 +457,20 @@ function ensureCartBindings(productsGrid) {
 }
 
 function syncVisibleQty(productsGrid, productId) {
-  const card = productsGrid?.querySelector?.(`.product-card[data-product-id="${CSS.escape(productId)}"]`);
+  const card = productsGrid?.querySelector?.(
+    `.product-card[data-product-id="${CSS.escape(productId)}"]`
+  );
   if (!card) return;
+
   const input = card.querySelector('input[data-role="qty"]');
   if (!input) return;
+
   input.value = String(getQtyFromCart(productId));
 }
 
 function syncAllVisibleQty(productsGrid) {
   if (!productsGrid) return;
+
   const cards = productsGrid.querySelectorAll(".product-card[data-product-id]");
   cards.forEach((card) => {
     const productId = card.dataset.productId;
@@ -432,9 +480,9 @@ function syncAllVisibleQty(productsGrid) {
   });
 }
 
-/* ==============================
+/* =========================
    Public API
-============================== */
+========================= */
 
 export async function loadProducts(db) {
   const snap = await getDocs(
@@ -471,7 +519,7 @@ export async function renderProducts(productsGrid, items, opts = {}) {
       : "Ești în așteptare (pending). Vezi catalog fără prețuri.";
   }
 
-  // Keep a products map global for order submit
+  // Map for order submit (orders.js may read this)
   window.__PRODUCTS_BY_ID__ = window.__PRODUCTS_BY_ID__ || {};
   _lastItems.forEach((p) => (window.__PRODUCTS_BY_ID__[p.id] = p));
 
@@ -479,7 +527,9 @@ export async function renderProducts(productsGrid, items, opts = {}) {
   try {
     const db = _lastRenderOpts.db || window.__db || null;
     const categories = db ? await loadCategories(db) : [];
-    const presentCategoryIds = uniq(_lastItems.map((p) => String(p.categoryId || "")).filter(Boolean));
+    const presentCategoryIds = uniq(
+      _lastItems.map((p) => String(p.categoryId || "")).filter(Boolean)
+    );
     if (categories.length) renderCategoriesUI(productsGrid, categories, presentCategoryIds);
   } catch (e) {
     console.warn("Categories load failed:", e);
@@ -502,16 +552,15 @@ export async function renderProducts(productsGrid, items, opts = {}) {
   }
 
   filtered.forEach((p) => {
-    const cardWrap = document.createElement("div");
-    cardWrap.innerHTML = productCardHTML(p, _lastRenderOpts.showPrices, _lastRenderOpts.priceRules);
-    productsGrid.appendChild(cardWrap.firstElementChild);
+    const wrap = document.createElement("div");
+    wrap.innerHTML = productCardHTML(p, _lastRenderOpts.showPrices, _lastRenderOpts.priceRules);
+    productsGrid.appendChild(wrap.firstElementChild);
   });
 
   if (_lastRenderOpts.showPrices) {
     syncAllVisibleQty(productsGrid);
     updateStickyCartBarVisibilityAndData();
   } else {
-    // hide bar if user can't order
     const bar = document.getElementById("stickyCartBar");
     if (bar) bar.style.display = "none";
   }
