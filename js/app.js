@@ -17,18 +17,25 @@ import {
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 ;
-window.addEventListener("catalog:submitOrderRequested", async () => {
+window.addEventListener("catalog:submitOrderRequested", async (event) => {
   try {
     const user = auth.currentUser;
-
     if (!user) {
       alert("Trebuie să fii logat.");
       return;
     }
 
+    const items = event.detail?.items || [];
+
+    if (!items.length) {
+      alert("Coș gol.");
+      return;
+    }
+
     const result = await submitOrder({
       clientId: user.uid,
-      clientName: user.email || ""
+      clientName: user.email || "",
+      items
     });
 
     alert(`Comanda #${result.orderNumber} a fost trimisă.`);
